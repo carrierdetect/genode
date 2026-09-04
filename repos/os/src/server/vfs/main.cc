@@ -506,6 +506,7 @@ class Vfs_server::Session_component : private Session_resources,
 				for (;;) {
 					mkdir_result = _vfs_env.fs().mkdir(path_str, { });
 					if (mkdir_result != Mkdir_result::RETRY) break;
+					_vfs_env.io().commit();
 					_ep.wait_and_dispatch_one_io_signal();
 				}
 				assert_mkdir(mkdir_result);
