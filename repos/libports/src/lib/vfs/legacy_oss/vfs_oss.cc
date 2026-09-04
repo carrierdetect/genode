@@ -720,7 +720,7 @@ class Vfs_oss::Data_file_system : public Single_file_system
 		                 Name         const &name)
 		:
 			Single_file_system { parent_fs, {
-				.ident = name,
+				.ident = { { "data ", name } },
 				.name  = name,
 				.rwx   = File::RO
 			} },
@@ -975,7 +975,7 @@ struct Vfs_oss::File_system : Union_file_system, Vfs::File_system::Factory
 		                                  [&] (Genode::Generator &g) {
 			g.named_node("data", name);
 			g.named_node("dir", Name(".", name), [&] {
-				g.node("info");
+				g.named_node("readonly_value", "info");
 				g.named_node("readonly_value", "channels");
 				g.named_node("readonly_value", "sample_rate");
 				g.named_node("readonly_value", "format");
