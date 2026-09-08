@@ -331,14 +331,14 @@ struct Vfs_ram::Symlink : Vfs_ram::Node
 
 	Symlink(char const *name) : Node(name) { }
 
-		size_t length() override { return strlen(target.string()); }
+	size_t length() override { return strlen(target.string()); }
 
-		Read_result read(Byte_range_ptr const &dst, Seek) override
-		{
-			size_t n = min(dst.num_bytes, strlen(target.string()));
-			memcpy(dst.start, target.string(), n);
-			return n;
-		}
+	Read_result read(Byte_range_ptr const &dst, Seek) override
+	{
+		size_t n = min(dst.num_bytes, strlen(target.string()));
+		memcpy(dst.start, target.string(), n);
+		return n;
+	}
 };
 
 
