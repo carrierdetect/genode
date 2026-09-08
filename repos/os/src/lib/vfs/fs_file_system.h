@@ -929,7 +929,8 @@ class Vfs_fs::File_system : public Vfs::File_system, private Remote_io
 			catch (Out_of_ram)                         { error = Opendir_error::OUT_OF_RAM; }
 			catch (Out_of_caps)                        { error = Opendir_error::OUT_OF_CAPS; }
 
-			_fs.close(dir);
+			if (dir.value != ~0u)
+				_fs.close(dir);
 
 			return error;
 		}
