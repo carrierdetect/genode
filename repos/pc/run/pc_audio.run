@@ -123,7 +123,7 @@ config | prio_levels: 2
 
 + start pc_audio | priority: -1 | ram: 10M
   + config | report_mixer: yes | report_devices: yes | speaker_priority: external | mic_priority: external
-           | profile: zbook8
+           | . profile: zbook8
     + vfs
       + dir firmware | + tar sof_firmware.tar
     + profile s937 | . HDA
