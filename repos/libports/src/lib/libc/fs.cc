@@ -1696,9 +1696,9 @@ int Libc::Fs::symlink(char const *target_path, const char *link_path)
 
 		switch (_vfs.symlink(link_path, target_path, mtime)) {
 		case Vfs::Symlink_result::RETRY:   return Fn::INCOMPLETE;
-		case Vfs::Symlink_result::CREATED: succeeded = true;      break;
-		case Vfs::Symlink_result::UPDATED: succeeded = true;      break;
-		case Vfs::Symlink_result::DENIED:  result_errno = ENOENT; break;
+		case Vfs::Symlink_result::CREATED: succeeded = true;     break;
+		case Vfs::Symlink_result::UPDATED: succeeded = true;     break;
+		case Vfs::Symlink_result::DENIED:  result_errno = EPERM; break;
 		}
 		return Fn::COMPLETE;
 	});

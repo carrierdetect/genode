@@ -567,6 +567,7 @@ class Vfs_server::Session_component : private Session_resources,
 						_vfs_env.io().commit();
 						_ep.wait_and_dispatch_one_io_signal();
 					}
+					assert_symlink(symlink_result);
 				}
 
 				return Symlink_handle {
