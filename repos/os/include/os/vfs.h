@@ -308,7 +308,7 @@ struct Genode::Directory : Noncopyable, Interface
 			Vfs::Follow_result result = Vfs::Follow_error::DENIED;
 			for (;;) {
 				result = _nonconst_fs().follow(path.string(), dst);
-				if (result != Vfs::Follow_error::RETRY)
+				if (result != Vfs::Follow_error::RETRY) break;
 				_io.commit_and_wait();
 			};
 
@@ -333,7 +333,7 @@ struct Genode::Directory : Noncopyable, Interface
 			for (;;) {
 				Vfs::Symlink_result const result =
 					_nonconst_fs().symlink(join(_path, rel_path).string(),
-				                                target.string(), ts);
+					                       target.string(), ts);
 				if (result != Vfs::Symlink_result::RETRY) break;
 				_io.commit_and_wait();
 			}

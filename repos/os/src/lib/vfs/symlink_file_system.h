@@ -98,9 +98,11 @@ class Vfs_symlink::File_system : public Single_file_system
 				return Follow_error::DENIED;
 
 			_target.with_span([&] (Span const &src) {
-				copy_cstring(dst.start, src.start, min(dst.num_bytes, src.num_bytes)); });
+				size_t n = min(dst.num_bytes,
+				               src.num_bytes + 1 /* null termination */);
+				copy_cstring(dst.start, src.start, n); });
 
-			return Path_elem { 1 };
+			return Path_elem { 0 };
 		}
 
 		Stat_result stat(char const *path, Stat &out) override
