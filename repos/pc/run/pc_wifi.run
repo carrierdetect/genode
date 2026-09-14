@@ -101,7 +101,7 @@ config | verbose: yes | prio_levels: 2
     + service RM                     | + parent
     + service ROM                    | + parent
 
-+ start platform | caps: 100 | ram: 2M | managing_system: yes
++ start platform | caps: 200 | ram: 2M | managing_system: yes
   + binary pc_platform
   + provides
     + service Dma
