@@ -31,7 +31,7 @@ import_from_depot [depot_user]/src/[base_src] \
                   [depot_user]/src/init \
                   [depot_user]/src/nvme \
                   [depot_user]/src/pci_decode \
-                  [depot_user]/src/platform \
+                  [depot_user]/src/pc_platform \
                   [depot_user]/src/report_rom
 
 #
@@ -99,7 +99,8 @@ config | verbose: no
     + service CPU                    | + parent
     + service ROM                    | + parent
 
-+ start platform | caps: 100 | ram: 2M | managing_system: yes
++ start platform | caps: 200 | ram: 2M | managing_system: yes
+  + binary pc_platform
   + provides
     + service Platform
     + service Dma
