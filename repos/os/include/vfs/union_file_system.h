@@ -495,7 +495,7 @@ class Genode::Vfs::Union_file_system : public File_system, public Parent_fs
 
 			Follow_result result = Follow_error::DENIED;
 			_for_each_fs([&] (Fs &fs) {
-				if (result == Follow_error::DENIED)
+				if (result == Follow_error::DENIED || result == Follow_error::NO_SYMLINK)
 					result = fs.follow(path, dst); });
 			return result;
 		}
