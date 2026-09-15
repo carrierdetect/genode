@@ -56,6 +56,8 @@ config
   + config
     + policy | label: pci_decode -> system | report: acpi -> acpi
     + policy | label: platform -> devices  | report: pci_decode -> devices
+    + policy | label: platform -> system   | report: dummy
+    + policy | label: platform -> sleep_states | report: dummy
     + policy | label: router -> config     | report: test -> router_config
     + policy | label: test -> ping_result  | report: ping -> result
 
@@ -77,7 +79,9 @@ config
     + policy | label_prefix: wifi | info: yes | + pci | class: WIFI
     + policy | label_prefix: nic  | info: yes | + pci | class: ETHERNET
   + route
-    + service ROM | label: devices | + child report_rom
+    + service ROM | label: devices      | + child report_rom
+    + service ROM | label: system       | + child report_rom
+    + service ROM | label: sleep_states | + child report_rom
     + any-service
       + parent
       + any-child

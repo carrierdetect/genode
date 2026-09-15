@@ -118,6 +118,8 @@ config | verbose: no | prio_levels: 4
   + config
     + policy | label: pci_decode -> system | report: acpi -> acpi
     + policy | label: platform -> devices  | report: pci_decode -> devices
+    + policy | label: platform -> system   | report: dummy
+    + policy | label: platform -> sleep_states | report: dummy
     + policy | label: usb_hid -> report    | report: usb -> devices
 
 + start acpi | caps: 350 | ram: 6M | priority: -1
@@ -157,8 +159,9 @@ config | verbose: no | prio_levels: 4
   | + policy | label_prefix: usb | info: yes
   |   + pci | class: USB
   + route
-    + service ROM | label: devices
-    | + child platform_reports
+    + service ROM | label: devices      | + child platform_reports
+    + service ROM | label: system       | + child platform_reports
+    + service ROM | label: sleep_states | + child platform_reports
     + any-service
       + parent
       + any-child

@@ -77,6 +77,8 @@ config | verbose: no
   + config
     + policy | label: pci_decode -> system | report: acpi -> acpi
     + policy | label: platform -> devices  | report: pci_decode -> devices
+    + policy | label: platform -> system   | report: dummy
+    + policy | label: platform -> sleep_states | report: dummy
 
 + start acpi | caps: 350 | ram: 4M
   + route
@@ -106,6 +108,8 @@ config | verbose: no
     + service Dma
   + route
     + service ROM     | label: devices | + child report_rom
+    + service ROM     | label: system  | + child report_rom
+    + service ROM     | label: sleep_states | + child report_rom
     + service Report                   | + child report_rom
     + service Timer                    | + child timer
     + service IRQ                      | + parent
