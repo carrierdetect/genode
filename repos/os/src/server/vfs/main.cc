@@ -551,7 +551,9 @@ class Vfs_server::Session_component : private Session_resources,
 				char const *name_str = name.string();
 				_assert_valid_name(name_str);
 
-				String<MAX_PATH_LEN> path { dir.path, "/", name.string() };
+				using Path = String<MAX_PATH_LEN>;
+				Path path = (dir.path == "/") ? Path { "/", name.string() }
+				                              : Path { dir.path, "/", name.string() };
 
 				bool const exists = _vfs_env.fs().dir_entry_exists(path.string());
 
