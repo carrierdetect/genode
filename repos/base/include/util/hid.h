@@ -21,13 +21,13 @@
 #include <base/log.h>
 
 namespace Genode {
-	class Hid_node;
-	class Hid_generator;
+	class Node;
+	class Generator;
 	class Xml_node; /* forward declaration */
 }
 
 
-class Genode::Hid_node : Noncopyable
+class Genode::Node : Noncopyable
 {
 	public:
 
@@ -224,7 +224,7 @@ class Genode::Hid_node : Noncopyable
 
 		Indent const _indent { 0 };
 
-		friend class Hid_generator;  /* for 'Hid_generator::_copy' */
+		friend class Generator;  /* for 'Generator::_copy' */
 
 		auto _with_sub_node(auto const &match_fn, auto const &fn,
 		                    auto const &missing_fn) const -> decltype(missing_fn())
@@ -233,7 +233,7 @@ class Genode::Hid_node : Noncopyable
 			size_t      num_bytes { };
 			Indent      indent    { };
 
-			for_each_sub_node([&] (Hid_node const &node) {
+			for_each_sub_node([&] (Node const &node) {
 				if (!start && match_fn(node)) {
 					start     = node._bytes.start;
 					num_bytes = node._bytes.num_bytes;
@@ -242,7 +242,7 @@ class Genode::Hid_node : Noncopyable
 			if (!start)
 				return missing_fn();
 
-			return fn(Hid_node { indent, { start, num_bytes } });
+			return fn(Node { indent, { start, num_bytes } });
 		}
 
 		using With_tag_value = Callable<void, Span const &, Span const &>;
@@ -258,22 +258,24 @@ class Genode::Hid_node : Noncopyable
 			return { dst.start, _bytes.num_bytes };
 		}
 
-		Hid_node(Indent i, Span const &s) : _bytes(s.start, s.num_bytes), _indent(i) { }
+		Node(Indent i, Span const &s) : _bytes(s.start, s.num_bytes), _indent(i) { }
 
 	public:
 
-		Hid_node(Const_byte_range_ptr const &);
+		Node(Const_byte_range_ptr const &);
 
-		Hid_node(Hid_node const &other, Byte_range_ptr const &dst)
+		Node(Node const &other, Byte_range_ptr const &dst)
 		:
-			Hid_node(other._indent, other._copied(dst))
+			Node(other._indent, other._copied(dst))
 		{ }
+
+		Node() : Node(Const_byte_range_ptr(nullptr, 0)) { }
 
 		bool valid() const { return _bytes.num_bytes > 0; }
 
 		Type type() const
 		{
-			Type result { "invalid" };
+			Type result { "empty" };
 
 			_with_type(_bytes, [&] (Span const &type) {
 				if (type.num_bytes)
@@ -301,7 +303,12 @@ class Genode::Hid_node : Noncopyable
 		{
 			_for_each_sub_node(_bytes, With_indent_span::Fn {
 				[&] (Indent const indent, Span const &s) {
-					fn(Hid_node { indent, s }); } });
+					fn(Node { indent, s }); } });
+		}
+
+		void for_each_sub_node(char const *type, auto const &fn) const
+		{
+			for_each_sub_node([&] (Node const &n) { if (n.type() == type) fn(n); });
 		}
 
 		auto with_sub_node(char const *type, auto const &fn,
@@ -309,7 +316,7 @@ class Genode::Hid_node : Noncopyable
 		{
 			unsigned found = false;
 
-			auto match = [&] (Hid_node const &node)
+			auto match = [&] (Node const &node)
 			{
 				if (found || node.type() != type)
 					return false;
@@ -325,8 +332,19 @@ class Genode::Hid_node : Noncopyable
 		                   auto const &missing_fn) const -> decltype(missing_fn())
 		{
 			unsigned count = 0;
-			return _with_sub_node([&] (Hid_node const &) { return count++ == n; },
+			return _with_sub_node([&] (Node const &) { return count++ == n; },
 			                      fn, missing_fn);
+		}
+
+		void with_optional_sub_node(char const *type, auto const &fn) const
+		{
+			with_sub_node(type, fn, [] { });
+		}
+
+		bool has_sub_node(char const *type) const
+		{
+			return with_sub_node(type, [&] (Node const &) { return true;  },
+			                           [&]                    { return false; });
 		}
 
 		template <typename T>
@@ -378,16 +396,26 @@ class Genode::Hid_node : Noncopyable
 				fn(Quoted_line { .bytes = { start, num_bytes }, .last = true });
 		}
 
+		/**
+		 * Utility for printing all quoted lines of a node
+		 */
+		struct Quoted_content
+		{
+			Node const &_node;
+
+			void print(Output &out) const;
+		};
+
 		size_t num_bytes() const { return _bytes.num_bytes; }
 
-		bool differs_from(Hid_node const &other) const { return !_bytes.equals(other._bytes); }
+		bool differs_from(Node const &other) const { return !_bytes.equals(other._bytes); }
 
 		void print(Output &out) const { out.out_string(_bytes.start, _bytes.num_bytes); }
 };
 
 
 template <typename T>
-T Genode::Hid_node::attribute_value(char const *type, T const default_value) const
+T Genode::Node::attribute_value(char const *type, T const default_value) const
 {
 	T result = default_value;
 	_with_tag_value(type, With_tag_value::Fn {
@@ -400,7 +428,7 @@ T Genode::Hid_node::attribute_value(char const *type, T const default_value) con
 
 template <Genode::size_t N>
 Genode::String<N>
-Genode::Hid_node::attribute_value(char const *type, String<N> const default_value) const
+Genode::Node::attribute_value(char const *type, String<N> const default_value) const
 {
 	String<N> result = default_value;
 	_with_tag_value(type, With_tag_value::Fn {
@@ -410,7 +438,7 @@ Genode::Hid_node::attribute_value(char const *type, String<N> const default_valu
 }
 
 
-class Genode::Hid_generator : Noncopyable
+class Genode::Generator : Noncopyable
 {
 	private:
 
@@ -498,7 +526,7 @@ class Genode::Hid_generator : Noncopyable
 
 		void _attribute(char const *, char const *, size_t);
 
-		Hid_generator(Byte_range_ptr const &bytes, char const *name, auto const &fn)
+		Generator(Byte_range_ptr const &bytes, char const *name, auto const &fn)
 		:
 			_out_buffer(bytes)
 		{
@@ -509,7 +537,7 @@ class Genode::Hid_generator : Noncopyable
 
 		void _print_node_type(Span const &);
 		void _node(char const *, Node_fn::Ft const &);
-		void _copy(Hid_node const &);
+		void _copy(Node const &);
 		void _start_quoted_line();
 		void _append_quoted(Span const &);
 
@@ -536,7 +564,7 @@ class Genode::Hid_generator : Noncopyable
 		static Result generate(Byte_range_ptr const &buffer,
 		                       Tag_name       const &tag, auto const &fn)
 		{
-			Hid_generator hid(buffer, tag.string(), [&] { fn(hid); });
+			Generator hid(buffer, tag.string(), [&] { fn(hid); });
 
 			if (hid._out_buffer.exceeded())
 				return Buffer_error::EXCEEDED;
@@ -552,6 +580,21 @@ class Genode::Hid_generator : Noncopyable
 		void node(char const *name) { node(name, [] { }); }
 
 		void tabular(auto const &fn) { _tabular(Node_fn::Fn { fn }); }
+
+		void tabular_node(char const *name, auto const &fn)
+		{
+			node(name, [&] { tabular(fn); });
+		}
+
+		void named_node(char const *type, auto const &name, auto const &fn)
+		{
+			node(type, [&] { attribute("name", name); fn(); });
+		}
+
+		void named_node(char const *type, auto const &name)
+		{
+			named_node(type, name, [&] { });
+		}
 
 		void attribute(char const *name, char const *str, size_t str_len)
 		{
@@ -627,20 +670,12 @@ class Genode::Hid_generator : Noncopyable
 		/**
 		 * Copy all attributes from the given node
 		 */
-		void node_attributes(auto const &node)
+		void node_attributes(Node const &node)
 		{
-			node.for_each_attribute([&] (auto const &attr) {
-				attribute(attr.name.string(),
+			node.for_each_attribute([&] (Node::Attribute const &attr) {
+				attribute(Tag_name { attr.tag }.string(),
 				          attr.value.start, attr.value.num_bytes); });
 		}
-
-		/**
-		 * Compatibility helper for the transition from Xml_node to Node
-		 *
-		 * As the interface of 'Xml_attribute' differs from 'Attribute', the
-		 * 'node_attributes' template above cannot be used for 'Xml_node'.
-		 */
-		void node_attributes(Xml_node const &node);
 
 		struct Max_depth { unsigned value; };
 
@@ -673,12 +708,12 @@ class Genode::Hid_generator : Noncopyable
 		 * The content can either be quoted content or sub nodes but not a mix
 		 * of both.
 		 */
-		void append_node_content(Hid_node const &node)
+		void append_node_content(Node const &node)
 		{
 			if (_try_append_quoted(node))
 				return;
 
-			node.for_each_sub_node([&] (Hid_node const &sub_node) {
+			node.for_each_sub_node([&] (Node const &sub_node) {
 				append_node(sub_node); });
 		}
 
@@ -700,7 +735,7 @@ class Genode::Hid_generator : Noncopyable
 		/**
 		 * Append a verbatim copy of an HID node
 		 */
-		void append_node(Hid_node const &node) { _copy(node); }
+		void append_node(Node const &node) { _copy(node); }
 };
 
 #endif /* _INCLUDE__UTIL__HID_H_ */
