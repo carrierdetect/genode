@@ -13,7 +13,6 @@ import_from_depot [depot_user]/src/[base_src] \
                   [depot_user]/src/nic_router \
                   [depot_user]/src/posix \
                   [depot_user]/src/pc_rtc \
-                  [depot_user]/src/nic_router \
                   [depot_user]/src/vfs \
                   [depot_user]/src/vfs_jitterentropy \
                   [depot_user]/src/vfs_lxip \
@@ -76,8 +75,8 @@ config | verbose: yes | prio_levels: 2
     + domain client | interface: 100.64.0.1/24
       + tcp | dst: 0.0.0.0/0 | + permit-any | domain: uplink
       + udp | dst: 0.0.0.0/0 | + permit-any | domain: uplink
-      + dhcp-server | ip_first: 100.64.0.2 | ip_last: 100.64.0.3 | ip_lease_time_sec: 600
-        + dns-server | ip: 9.9.9.9
+      + dhcp-server | ip_first: 100.64.0.2 | ip_last: 100.64.0.3 | ip_lease_time_sec: 600 | dns_config_from: uplink
+        x dns-server | ip: 9.9.9.9
 
 + start vfs | caps: 150 | ram: 10M
   + provides | + service File_system
