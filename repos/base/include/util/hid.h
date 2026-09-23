@@ -203,6 +203,8 @@ class Genode::Node : Noncopyable
 			});
 		}
 
+		using With_node = Callable<void, Node const &>;
+
 		/* let '_for_each_sub_node' be a regular function, not a template */
 		using With_indent_span = Callable<void, Indent const &, Span const &>;
 
@@ -226,24 +228,11 @@ class Genode::Node : Noncopyable
 
 		friend class Generator;  /* for 'Generator::_copy' */
 
-		auto _with_sub_node(auto const &match_fn, auto const &fn,
-		                    auto const &missing_fn) const -> decltype(missing_fn())
-		{
-			char const *start     { };
-			size_t      num_bytes { };
-			Indent      indent    { };
+		struct Match { Indent indent; Span bytes; };
 
-			for_each_sub_node([&] (Node const &node) {
-				if (!start && match_fn(node)) {
-					start     = node._bytes.start;
-					num_bytes = node._bytes.num_bytes;
-					indent    = node._indent; } });
-
-			if (!start)
-				return missing_fn();
-
-			return fn(Node { indent, { start, num_bytes } });
-		}
+		Match _search(auto const &) const;
+		Match _search_by_type(char const *) const;
+		Match _search_by_index(unsigned) const;
 
 		using With_tag_value = Callable<void, Span const &, Span const &>;
 
@@ -342,18 +331,11 @@ class Genode::Node : Noncopyable
 		auto with_sub_node(char const *type, auto const &fn,
 		                   auto const &missing_fn) const -> decltype(missing_fn())
 		{
-			unsigned found = false;
-
-			auto match = [&] (Node const &node)
-			{
-				if (found || node.type() != type)
-					return false;
-
-				found = true;
-				return true;
-			};
-
-			return _with_sub_node(match, fn, missing_fn);
+			Match const match = _search_by_type(type);
+			if (match.bytes.num_bytes)
+				return fn(Node(match.indent, match.bytes));
+			else
+				return missing_fn();
 		}
 
 		/**
@@ -365,9 +347,11 @@ class Genode::Node : Noncopyable
 		auto with_sub_node(unsigned n, auto const &fn,
 		                   auto const &missing_fn) const -> decltype(missing_fn())
 		{
-			unsigned count = 0;
-			return _with_sub_node([&] (Node const &) { return count++ == n; },
-			                      fn, missing_fn);
+			Match const match = _search_by_index(n);
+			if (match.bytes.num_bytes)
+				return fn(Node(match.indent, match.bytes));
+			else
+				return missing_fn();
 		}
 
 		/**
@@ -380,11 +364,7 @@ class Genode::Node : Noncopyable
 			with_sub_node(type, fn, [] { });
 		}
 
-		bool has_sub_node(char const *type) const
-		{
-			return with_sub_node(type, [&] (Node const &) { return true;  },
-			                           [&]                { return false; });
-		}
+		bool has_sub_node(char const *type) const;
 
 		/**
 		 * Return the value of the attribute named 'attr' as type 'T'
@@ -396,17 +376,12 @@ class Genode::Node : Noncopyable
 		 * The return type is inferred from the type of the default value.
 		 */
 		template <typename T>
-		T attribute_value(char const *type, T const default_value) const;
+		T attribute_value(char const *tag, T const default_value) const;
 
 		template <size_t N>
-		String<N> attribute_value(char const *type, String<N> const default_value) const;
+		String<N> attribute_value(char const *tag, String<N> const default_value) const;
 
-		bool has_attribute(char const *type) const
-		{
-			bool result = false;
-			_with_tag_value(type, With_tag_value::Fn {[&] (auto &, auto &) { result = true; } });
-			return result;
-		}
+		bool has_attribute(char const *tag) const;
 
 		static void print_quoted_line(Output &out, Const_byte_range_ptr const &bytes)
 		{
@@ -478,10 +453,10 @@ class Genode::Node : Noncopyable
 
 
 template <typename T>
-T Genode::Node::attribute_value(char const *type, T const default_value) const
+T Genode::Node::attribute_value(char const *tag, T const default_value) const
 {
 	T result = default_value;
-	_with_tag_value(type, With_tag_value::Fn {
+	_with_tag_value(tag, With_tag_value::Fn {
 		[&] (Span const &, Span const &value) {
 			if (!value.num_bytes || (value.num_bytes != parse(value, result)))
 				result = default_value; } });
@@ -491,10 +466,10 @@ T Genode::Node::attribute_value(char const *type, T const default_value) const
 
 template <Genode::size_t N>
 Genode::String<N>
-Genode::Node::attribute_value(char const *type, String<N> const default_value) const
+Genode::Node::attribute_value(char const *tag, String<N> const default_value) const
 {
 	String<N> result = default_value;
-	_with_tag_value(type, With_tag_value::Fn {
+	_with_tag_value(tag, With_tag_value::Fn {
 		[&] (Span const &, Span const &value) {
 			result = { Cstring(value.start, value.num_bytes) }; } });
 	return result;

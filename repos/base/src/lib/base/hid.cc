@@ -31,6 +31,37 @@ namespace {
 }
 
 
+Node::Match Node::_search(auto const &cond_fn) const
+{
+	char const *start     { };
+	size_t      num_bytes { };
+	Indent      indent    { };
+
+	for_each_sub_node([&] (Node const &node) {
+		if (!start && cond_fn(node)) {
+			indent    = node._indent;
+			start     = node._bytes.start;
+			num_bytes = node._bytes.num_bytes;
+		}
+	});
+
+	return { indent, { start, num_bytes } };
+}
+
+
+Node::Match Node::_search_by_type(char const *type) const
+{
+	return _search([&] (Node const &node) { return node.type() == type; });
+}
+
+
+Node::Match Node::_search_by_index(unsigned n) const
+{
+	unsigned i = 0;
+	return _search([&] (Node const &) { return i++ == n; });
+}
+
+
 void Node::_for_each_sub_node(Span const &bytes, With_indent_span::Ft const &fn)
 {
 	struct Node
@@ -75,7 +106,14 @@ void Node::_for_each_sub_node(Span const &bytes, With_indent_span::Ft const &fn)
 }
 
 
-void Genode::Node::_for_each_attr(Span const &bytes, auto const &fn)
+bool Node::has_sub_node(char const *type) const
+{
+	return with_sub_node(type, [&] (Node const &) { return true;  },
+	                           [&]                { return false; });
+}
+
+
+void Node::_for_each_attr(Span const &bytes, auto const &fn)
 {
 	auto with_tag_value = [] (Span const &s, auto const &fn)
 	{
@@ -120,11 +158,21 @@ void Genode::Node::_for_each_attr(Span const &bytes, auto const &fn)
 }
 
 
-void Genode::Node::_for_each_attribute(With_attribute::Ft const &fn) const
+void Node::_for_each_attribute(With_attribute::Ft const &fn) const
 {
 	_for_each_attr(_bytes, [&] (Span const &tag, Span const &value) {
 		fn(Attribute { .tag   = { tag  .start, tag  .num_bytes },
 		               .value = { value.start, value.num_bytes } }); });
+}
+
+
+bool Node::has_attribute(char const *type) const
+{
+	bool result = false;
+	size_t const type_len = strlen(type);
+	_for_each_attr(_bytes, [&] (Span const &tag, Span const &) {
+		if (!result && tag.equals({ type, type_len })) result = true; });
+	return result;
 }
 
 
@@ -140,7 +188,7 @@ void Node::_with_tag_value(char const *type, With_tag_value::Ft const &fn) const
 }
 
 
-static Genode::Span skipped_whitespace(Span const &bytes)
+static Span skipped_whitespace(Span const &bytes)
 {
 	char const *s = bytes.start;
 	size_t      n = bytes.num_bytes;
