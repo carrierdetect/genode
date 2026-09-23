@@ -85,6 +85,7 @@ config | prio_levels: 2
   |   + pci | vendor_id: 0x8086 | device_id: 0x54ea | . Alder Lake N (StarLite)
   |   + pci | vendor_id: 0x8086 | device_id: 0x7e51 | . Meteor Lake chipset
   |   + pci | vendor_id: 0x8086 | device_id: 0x7778 | . Arrow Lake chipset
+  |   + pci | vendor_id: 0x8086 | device_id: 0xe378 | . Panther Lake chipset
   |   + device INT34C5          | . Tiger/Alder Lake
   |   + device INTC1083         | . Meteor/Arrow Lake
   |   + device ZBOOK_X_SYNA3167 | . HP ZBook X G2i 16
