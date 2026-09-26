@@ -135,6 +135,38 @@ class Vfs_terminal::Data_file_system : public Single_file_system
 			{ }
 
 			bool read_ready() const override {
+
+				/*
+				 * Ask the terminal, do not just look in the staging buffer.
+				 *
+				 * Data arrives from the Terminal session into _read_buffer
+				 * either here, in read(), or from the read-avail signal
+				 * handler on the entrypoint. The buffer holds 4000 bytes, so
+				 * a peer writing more than that in one go fills it, the
+				 * handler stops, and the remainder stays in the session.
+				 *
+				 * Answering from the buffer alone then makes select() and
+				 * poll() say "nothing to read" while the terminal is holding
+				 * thousands of bytes, and the handler will not fire again
+				 * until the peer writes MORE -- which a peer waiting for a
+				 * reply never does. The result is a stall that looks like a
+				 * dead link and is really a lost wakeup.
+				 *
+				 * Found on genherc: NJE over a terminal_crosslink signed on
+				 * and then stranded on the first data block, 7754 bytes
+				 * against the 4000-byte buffer. It is latent for every other
+				 * user of this plugin too -- the CTC and the 3705's lines
+				 * only escape it because their messages are small.
+				 *
+				 * _read_buffer, _terminal and _interrupt_handler are
+				 * reference members, so this is const-correct: the constness
+				 * of the handle does not propagate to what they refer to,
+				 * which is why read() can call the same helper.
+				 */
+				if (_read_buffer.empty())
+					_fetch_data_from_terminal(_terminal, _read_buffer,
+					                          _interrupt_handler, _raw);
+
 				return !_read_buffer.empty(); }
 
 			bool write_ready() const override { return true; }
