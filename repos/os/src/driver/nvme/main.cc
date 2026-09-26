@@ -2384,11 +2384,20 @@ class Nvme::Driver : Genode::Noncopyable
 					cid = _submit_trim(io_queue, request, ctrlr);
 					break;
 				default:
+					/*
+					 * Unreachable: _check_acceptance covers the whole enum and
+					 * rejects INVALID. Falling through here would leave the
+					 * caller's cid uninitialised while reporting ACCEPTED, and
+					 * _handle_requests_sq would key a Session_command on it.
+					 */
+					result = Response::REJECTED;
 					break;
 				}
 
-				_submits_in_flight ++;
-				_submits_pending = true;
+				if (result == Response::ACCEPTED) {
+					_submits_in_flight ++;
+					_submits_pending = true;
+				}
 			}
 
 			return result;
@@ -2450,8 +2459,19 @@ class Nvme::Driver : Genode::Noncopyable
 			});
 		}
 
-		Nvme::Io_queue::Command_id _io_queue_map { };
-		Io_queue_space             _io_queue_space { };
+		/*
+		 * Queue ids returned by this allocator index _sq[]/_cq[]/_dbl[],
+		 * which hold NUM_QUEUES == MAX_IO_QUEUES + 1 entries. It used to be
+		 * a Command_id, i.e. a Bit_allocator<MAX_IO_ENTRIES> of 512 bits, so
+		 * with more than MAX_IO_QUEUES sessions it would hand out ids past
+		 * the end of those arrays and setup_io() would index out of bounds.
+		 * Reachable only past 128 concurrent Block sessions, which is why it
+		 * has not bitten; size the allocator to the arrays it indexes.
+		 */
+		using Io_queue_id_alloc = Genode::Bit_allocator<Nvme::MAX_IO_QUEUES>;
+
+		Io_queue_id_alloc _io_queue_map { };
+		Io_queue_space    _io_queue_space { };
 
 		struct Io_queue_creation_error { };
 		using Io_queue_create_result = Attempt<Io_queue_space::Id,
@@ -2471,11 +2491,13 @@ class Nvme::Driver : Genode::Noncopyable
 						                            _dma, tx_buf_size);
 						return Io_queue_create_result { new_id };
 					} catch (Nvme::Controller::Initialization_failed) {
+						error("controller refused I/O queue ", new_id.value,
+						      " -- it grants fewer queues than we are asking for");
 						_io_queue_map.free(new_id.value - 1); }
 
 					return Io_queue_create_result { Io_queue_creation_error { } };
 				},
-				[&] (Nvme::Io_queue::Command_id::Error) {
+				[&] (Io_queue_id_alloc::Error) {
 					/* max I/O queues reached */
 					error("max I/O queues reached");
 					return Io_queue_creation_error();
@@ -2520,7 +2542,19 @@ struct Nvme::Main : Rpc_object<Typed_root<Block::Session>>
 	using Session_space = Id_space<Block_session_component>;
 	Session_space _sessions { };
 
-	using Session_map = Block::Session_map<>;
+	/*
+	 * Block::Session_map defaults to 32 entries, which silently caps the
+	 * driver at 32 concurrent Block sessions regardless of how many I/O
+	 * queues the controller grants -- and this controller grants 64. Thirty
+	 * sessions (two MVS partitions of fifteen volumes) fits; sixty does not,
+	 * and the 33rd session is refused with no message at all: alloc() returns
+	 * Alloc_error, session() frees the queue and returns DENIED, and nothing
+	 * says why.
+	 *
+	 * Size it to MAX_IO_QUEUES so the binding limit is the hardware's queue
+	 * count, reported where it happens, rather than an invisible default.
+	 */
+	using Session_map = Block::Session_map<uint8_t, Nvme::MAX_IO_QUEUES>;
 	Session_map _session_map { };
 
 	struct Session_command;
@@ -2758,6 +2792,8 @@ struct Nvme::Main : Rpc_object<Typed_root<Block::Session>>
 										return true;
 									},
 									[&] (Session_map::Alloc_error) {
+										error("no free session slot for '", label, "': ",
+										      _session_map.capacity(), " sessions in use");
 										_driver.free_io_queue(ctrlr, queue_id);
 										return false; }))
 									return;
@@ -2769,12 +2805,15 @@ struct Nvme::Main : Rpc_object<Typed_root<Block::Session>>
 										                        _request_handler, _driver.info(),
 										                        view, new_session_id.value);
 								} catch (...) {
+									error("could not construct session for '", label,
+									      "' -- out of RAM or caps in the driver");
 									_session_map.free(new_session_id);
 									_driver.free_io_queue(ctrlr, queue_id);
 								}
 							});
 						},
-						[&] (Driver::Io_queue_creation_error) { });
+						[&] (Driver::Io_queue_creation_error) {
+							error("no I/O queue available for '", label, "'"); });
 					});
 
 				if (session)
@@ -2782,7 +2821,9 @@ struct Nvme::Main : Rpc_object<Typed_root<Block::Session>>
 
 				return Session_error::DENIED;
 			},
-			[&] () -> Root::Result { return Session_error::DENIED; });
+			[&] () -> Root::Result {
+				error("no policy matches '", label, "'");
+				return Session_error::DENIED; });
 	}
 
 	void upgrade(Capability<Session>, Root::Upgrade_args const&) override { }
