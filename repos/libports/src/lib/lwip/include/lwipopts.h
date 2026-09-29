@@ -65,7 +65,7 @@ extern "C" {
  * told people to do.
  *
  * The range must sit OUTSIDE 49152-65535, and that is the whole reason it is
- * 0x5000 here rather than a shortened slice of lwIP's default. nic_router's
+ * 0x2D50 here rather than a shortened slice of lwIP's default. nic_router's
  * NAT port allocator owns exactly that span --
  * repos/os/src/server/nic_router/port_allocator.h: "FIRST_PORT = 49152,
  * NR_OF_PORTS = 16384" -- so a tcp-forward rule for a port inside it
@@ -84,8 +84,8 @@ extern "C" {
  * wrap test never fires and the stack walks out of the range entirely. The
  * modulo below cannot do that.
  */
-#define TCP_LOCAL_PORT_RANGE_START  0x5000                 /* 20480 */
-#define TCP_LOCAL_PORT_RANGE_END    0x500f                 /* 20495 */
+#define TCP_LOCAL_PORT_RANGE_START  0x2D50                 /* 11600 */
+#define TCP_LOCAL_PORT_RANGE_END    0x2D5F                 /* 11615 */
 #define TCP_ENSURE_LOCAL_PORT_RANGE(port) \
     ((u16_t)(TCP_LOCAL_PORT_RANGE_START + \
              ((port) % (u16_t)(TCP_LOCAL_PORT_RANGE_END - \
