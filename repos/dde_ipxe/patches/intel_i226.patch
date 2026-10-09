@@ -1,0 +1,92 @@
+diff -u -r a/src/drivers/net/intel.c b/src/drivers/net/intel.c
+--- a/src/drivers/net/intel.c
++++ b/src/drivers/net/intel.c
+@@ -277,6 +277,18 @@
+ 		       pba, readl ( intel->regs + INTEL_PBA ) );
+ 	}
+ 
++	/* The Intel I210's packet buffer size registers reset only on
++	 * power up.  If an operating system changes these but then
++	 * the computer recieves a reset signal without losing power,
++	 * the registers will stay the same (but be incompatible with
++	 * other register defaults), thus making the device unable to
++	 * pass traffic.
++	 */
++	if ( intel->flags & INTEL_PBSIZE_RST ) {
++		writel ( INTEL_RXPBS_I210, intel->regs + INTEL_RXPBS );
++		writel ( INTEL_TXPBS_I210, intel->regs + INTEL_TXPBS );
++	}
++
+ 	/* Always reset MAC.  Required to reset the TX and RX rings. */
+ 	writel ( ( ctrl | INTEL_CTRL_RST ), intel->regs + INTEL_CTRL );
+ 	mdelay ( INTEL_RESET_DELAY_MS );
+@@ -1137,6 +1149,16 @@
+ 	PCI_ROM ( 0x8086, 0x10f0, "82578dc", "82578DC", 0 ),
+ 	PCI_ROM ( 0x8086, 0x10f5, "82567lm", "82567LM", 0 ),
+ 	PCI_ROM ( 0x8086, 0x10f6, "82574l", "82574L", 0 ),
++	/* Only the "V" variants of I225/I226 are listed here, and the
++	 * omission is deliberate. The "LM" variants are the vPro parts,
++	 * and on this port's second target the LM port carries Intel AMT,
++	 * which is that machine's ONLY console -- it has no serial
++	 * connector and its firmware has no KVM. Binding that port would
++	 * cost remote recovery entirely. The platform policy naming one
++	 * PCI address is the first guard; leaving the id out of this
++	 * table is the second.
++	 */
++	PCI_ROM ( 0x8086, 0x125c, "i226v", "I226-V", INTEL_PBSIZE_RST ),
+ 	PCI_ROM ( 0x8086, 0x1501, "82567v-3", "82567V-3", INTEL_PBS_ERRATA ),
+ 	PCI_ROM ( 0x8086, 0x1502, "82579lm", "82579LM", INTEL_NO_PHY_RST ),
+ 	PCI_ROM ( 0x8086, 0x1503, "82579v", "82579V", 0 ),
+@@ -1156,7 +1178,7 @@
+ 	PCI_ROM ( 0x8086, 0x1525, "82567v-4", "82567V-4", 0 ),
+ 	PCI_ROM ( 0x8086, 0x1526, "82576-5", "82576", 0 ),
+ 	PCI_ROM ( 0x8086, 0x1527, "82580-f2", "82580 Fiber", 0 ),
+-	PCI_ROM ( 0x8086, 0x1533, "i210", "I210", 0 ),
++	PCI_ROM ( 0x8086, 0x1533, "i210", "I210", INTEL_PBSIZE_RST ),
+ 	PCI_ROM ( 0x8086, 0x1539, "i211", "I211", 0 ),
+ 	PCI_ROM ( 0x8086, 0x153a, "i217lm", "I217-LM", INTEL_NO_PHY_RST ),
+ 	PCI_ROM ( 0x8086, 0x153b, "i217v", "I217-V", 0 ),
+@@ -1164,7 +1186,7 @@
+ 	PCI_ROM ( 0x8086, 0x155a, "i218lm", "I218-LM", INTEL_NO_PHY_RST ),
+ 	PCI_ROM ( 0x8086, 0x156f, "i219lm", "I219-LM", INTEL_I219 ),
+ 	PCI_ROM ( 0x8086, 0x1570, "i219v", "I219-V", INTEL_I219 ),
+-	PCI_ROM ( 0x8086, 0x157b, "i210-2", "I210", 0 ),
++	PCI_ROM ( 0x8086, 0x157b, "i210-2", "I210", INTEL_PBSIZE_RST ),
+ 	PCI_ROM ( 0x8086, 0x15a0, "i218lm-2", "I218-LM", INTEL_NO_PHY_RST ),
+ 	PCI_ROM ( 0x8086, 0x15a1, "i218v-2", "I218-V", 0 ),
+ 	PCI_ROM ( 0x8086, 0x15a2, "i218lm-3", "I218-LM", INTEL_NO_PHY_RST ),
+@@ -1184,6 +1206,7 @@
+ 	PCI_ROM ( 0x8086, 0x15e1, "i219lm-9", "I219-LM (9)", INTEL_I219 ),
+ 	PCI_ROM ( 0x8086, 0x15e2, "i219v-9", "I219-V (9)", INTEL_I219 ),
+ 	PCI_ROM ( 0x8086, 0x15e3, "i219lm-5", "I219-LM (5)", INTEL_I219 ),
++	PCI_ROM ( 0x8086, 0x15f3, "i225v", "I225-V", INTEL_PBSIZE_RST ),
+ 	PCI_ROM ( 0x8086, 0x15f4, "i219lm-15", "I219-LM (15)", INTEL_I219 ),
+ 	PCI_ROM ( 0x8086, 0x15f5, "i219v-15", "I219-V (15)", INTEL_I219 ),
+ 	PCI_ROM ( 0x8086, 0x15f9, "i219lm-14", "I219-LM (14)", INTEL_I219 ),
+diff -u -r a/src/drivers/net/intel.h b/src/drivers/net/intel.h
+--- a/src/drivers/net/intel.h
++++ b/src/drivers/net/intel.h
+@@ -140,6 +140,14 @@
+ /** Packet Buffer Size */
+ #define INTEL_PBS 0x01008UL
+ 
++/** Receive Packet Buffer Size */
++#define INTEL_RXPBS 0x02404UL
++#define INTEL_RXPBS_I210	0x000000a2UL	/**< I210 power-up default */
++
++/** Transmit Packet Buffer Size */
++#define INTEL_TXPBS 0x03404UL
++#define INTEL_TXPBS_I210	0x04000014UL	/**< I210 power-up default */
++
+ /** Receive Descriptor register block */
+ #define INTEL_RD 0x02800UL
+ 
+@@ -317,6 +325,8 @@
+ 	INTEL_NO_ASDE = 0x0008,
+ 	/** Reset may cause a complete device hang */
+ 	INTEL_RST_HANG = 0x0010,
++	/** PBSIZE registers must be explicitly reset */
++	INTEL_PBSIZE_RST = 0x0020,
+ };
+ 
+ /** The i219 has a seriously broken reset mechanism */
