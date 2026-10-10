@@ -24,6 +24,16 @@ struct Bridge : Registry<Bridge>::Element
 
 	Registry<Bridge> sub_bridges {};
 
+	/*
+	 * PTM state of this bridge, filled in while the hierarchy is walked.
+	 * A requester may only be enabled once the responder above it is, so a
+	 * device needs to know what happened at its upstream port -- which is
+	 * what for_bridge() finds. Granularity follows the PTM encoding, where
+	 * 0 means "not indicated".
+	 */
+	bool            ptm_enabled     { false };
+	Genode::uint8_t ptm_granularity { 0 };
+
 	Bridge(Registry<Bridge> &registry,
 	       Pci::Bdf          bdf,
 	       Pci::bus_t        from,

@@ -515,6 +515,7 @@ struct Pci::Config : Genode::Mmio<0x45>
 				POWER_BUDGETING          = 0x4,
 				VENDOR                   = 0xb,
 				MULTI_ROOT_IO_VIRT       = 0x11,
+				PRECISION_TIME_MEASUREMENT = 0x1f,
 			};
 		};
 
@@ -566,11 +567,41 @@ struct Pci::Config : Genode::Mmio<0x45>
 		};
 	};
 
+	/*
+	 * PCIe Precision Time Measurement, PCI Express Base spec sec 6.22 and
+	 * 7.9.15. Twelve bytes: the extended-capability header, a read-only
+	 * capability register, and a control register.
+	 *
+	 * Granularity is NOT a plain integer. It is nanoseconds, except that 0
+	 * means "not indicated" and 0xff means "greater than 254ns", so it must
+	 * never be compared or maximised without handling 0 separately.
+	 */
+	struct Ptm_capability : Pci_express_extended_capability<0xc>
+	{
+		struct Capability : Register<0x4, 32>
+		{
+			struct Requester   : Bitfield<0, 1> {};
+			struct Responder   : Bitfield<1, 1> {};
+			struct Root        : Bitfield<2, 1> {};
+			struct Granularity : Bitfield<8, 8> {};
+		};
+
+		struct Control : Register<0x8, 32>
+		{
+			struct Enable      : Bitfield<0, 1> {};
+			struct Root_select : Bitfield<1, 1> {};
+			struct Granularity : Bitfield<8, 8> {};
+		};
+
+		using Pci_express_extended_capability::Pci_express_extended_capability;
+	};
+
 	Genode::Constructible<Power_management_capability>         power_cap   {};
 	Genode::Constructible<Msi_capability>                      msi_cap     {};
 	Genode::Constructible<Msi_x_capability>                    msi_x_cap   {};
 	Genode::Constructible<Pci_express_capability>              pci_e_cap   {};
 	Genode::Constructible<Advanced_error_reporting_capability> adv_err_cap {};
+	Genode::Constructible<Ptm_capability>                      ptm_cap     {};
 
 	Base_address bar0 { Mmio::range_at(BASE_ADDRESS_0) };
 	Base_address bar1 { Mmio::range_at(BASE_ADDRESS_0 + 0x4) };
@@ -619,6 +650,8 @@ struct Pci::Config : Genode::Mmio<0x45>
 				return;
 			case Capability_header::Id::ADVANCED_ERROR_REPORTING:
 				adv_err_cap.construct(Mmio::range_at(off)); break;
+			case Capability_header::Id::PRECISION_TIME_MEASUREMENT:
+				ptm_cap.construct(Mmio::range_at(off)); break;
 
 			default:
 				/* ignore unhandled extended capability */ ;

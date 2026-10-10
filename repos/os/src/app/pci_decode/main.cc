@@ -34,11 +34,47 @@ struct Main
 	Env                   &env;
 	Heap                   heap            { env.ram(), env.rm()       };
 	Attached_rom_dataspace platform_info   { env, "platform_info"      };
+	Attached_rom_dataspace config         { env, "config"             };
 	Expanding_reporter     pci_reporter    { env, "devices", "devices", { 32*1024 } };
 	Registry<Bridge>       bridge_registry {}; /* contains host bridges */
 
 	bool apic_capable { false };
 	bool msi_capable  { false };
+
+	/*
+	 * PCIe Precision Time Measurement.
+	 *
+	 * The capability is REPORTED for every device that has one, which is a
+	 * pure read and carries no risk. Enabling is opt-in per device, because
+	 * a requester can only be enabled by also enabling the responder above
+	 * it -- which is a root port, a device shared with everything else
+	 * behind it. On the machine this was written for, the port carrying the
+	 * only console sits behind a *different* root port, and that separation
+	 * is worth nothing if the enable is applied wherever the hardware
+	 * happens to allow it. So:
+	 *
+	 *   <config>
+	 *     <ptm device="57:00.0"/>              <!-- report what would happen -->
+	 *     <ptm device="57:00.0" write="yes"/>  <!-- actually enable it -->
+	 *   </config>
+	 *
+	 * Naming an endpoint implies its upstream responder: the walk is
+	 * top-down, so a root port is reached before anything behind it, and it
+	 * is enabled if any requested device lies within its bus range.
+	 */
+	struct Ptm_request
+	{
+		bool requested { false };
+		bool write     { false };
+	};
+
+	Ptm_request ptm_request_for_device(Pci::Bdf const &) const;
+	Ptm_request ptm_request_behind(Pci::bus_t from, Pci::bus_t to) const;
+
+	void handle_ptm_bridge(Pci::Bdf const &, Config &,
+	                       Bridge const &parent, Bridge &self);
+	void handle_ptm_device(Pci::Bdf const &, Config &);
+	void report_ptm(Config &, Generator &);
 
 	struct Intel_opregion
 	{
@@ -183,6 +219,237 @@ static irq_line_t fixup_irq_number(Config const &cfg,
  * reached downstream of a bridge).
  */
 
+/*
+ * The bus number out of a "bb:dd.f" string, which is how Pci::Bdf renders
+ * itself and therefore how a device is named in configuration. Hex, so
+ * ascii_to() would read "57" as fifty-seven rather than 0x57.
+ */
+static bool parse_bdf_bus(Genode::String<16> const &s, bus_t &out)
+{
+	char const *p = s.string();
+	unsigned v = 0, n = 0;
+
+	for (; *p && *p != ':'; p++, n++) {
+		unsigned d;
+		if      (*p >= '0' && *p <= '9') d = (unsigned)(*p - '0');
+		else if (*p >= 'a' && *p <= 'f') d = (unsigned)(*p - 'a') + 10;
+		else if (*p >= 'A' && *p <= 'F') d = (unsigned)(*p - 'A') + 10;
+		else return false;
+		v = v*16 + d;
+	}
+
+	if (!n || *p != ':' || v > 0xff)
+		return false;
+
+	out = (bus_t)v;
+	return true;
+}
+
+
+Main::Ptm_request Main::ptm_request_for_device(Bdf const &bdf) const
+{
+	Ptm_request result { };
+	String<16> const want = Bdf::string(bdf);
+
+	config.node().for_each_sub_node("ptm", [&] (Node const &node) {
+		String<16> const got = node.attribute_value("device", String<16>());
+		if (strcmp(got.string(), want.string()))
+			return;
+		result.requested = true;
+		if (node.attribute_value("write", false))
+			result.write = true;
+	});
+
+	return result;
+}
+
+
+Main::Ptm_request Main::ptm_request_behind(bus_t from, bus_t to) const
+{
+	Ptm_request result { };
+
+	config.node().for_each_sub_node("ptm", [&] (Node const &node) {
+		String<16> const got = node.attribute_value("device", String<16>());
+		bus_t bus = 0;
+		if (!parse_bdf_bus(got, bus)) {
+			warning("ptm: cannot read a bus number from device=\"", got, "\"");
+			return;
+		}
+		if (bus < from || bus > to)
+			return;
+		result.requested = true;
+		if (node.attribute_value("write", false))
+			result.write = true;
+	});
+
+	return result;
+}
+
+
+/*
+ * Effective granularity along a path. The encoding is nanoseconds EXCEPT
+ * that 0 means "not indicated", so an unknown value anywhere makes the
+ * result unknown rather than making it the minimum.
+ */
+static Genode::uint8_t ptm_path_granularity(Genode::uint8_t upstream,
+                                            Genode::uint8_t local)
+{
+	if (!upstream || !local)
+		return 0;
+
+	return upstream > local ? upstream : local;
+}
+
+
+void Main::handle_ptm_bridge(Bdf const &bdf, Config &cfg,
+                             Bridge const &parent, Bridge &self)
+{
+	if (!cfg.ptm_cap.constructed())
+		return;
+
+	using Ptm = Config::Ptm_capability;
+
+	auto const cap  = cfg.ptm_cap->read<Ptm::Capability>();
+	auto const ctrl = cfg.ptm_cap->read<Ptm::Control>();
+
+	bool    const root      = Ptm::Capability::Root::get(cap);
+	bool    const responder = Ptm::Capability::Responder::get(cap);
+	uint8_t const gran      = (uint8_t)Ptm::Capability::Granularity::get(cap);
+
+	Ptm_request const req = ptm_request_behind(self.from, self.to);
+
+	/*
+	 * Record the granularity even when nothing is enabled, so that a dry run
+	 * can still report what a requester below would have been given.
+	 */
+	self.ptm_granularity = root ? gran
+	                            : ptm_path_granularity(parent.ptm_granularity,
+	                                                   gran);
+
+	if (!req.requested)
+		return;
+
+	if (!root && !(responder && parent.ptm_enabled)) {
+		warning("ptm ", bdf, ": requested but it is neither a PTM root nor a "
+		        "responder behind an enabled one");
+		return;
+	}
+
+	/*
+	 * Enable, plus Root Select on a root. The control register's granularity
+	 * field is left at zero on a root and written on a responder -- which is
+	 * the configuration measured as working on this hardware under Linux:
+	 * root ctrl 0x3 with the field zero, requester ctrl 0x401 with it set.
+	 */
+	Ptm::Control::access_t v = 0;
+	Ptm::Control::Enable::set(v, 1);
+	if (root)
+		Ptm::Control::Root_select::set(v, 1);
+	else
+		Ptm::Control::Granularity::set(v, self.ptm_granularity);
+
+	log("ptm ", bdf, " ", root ? "root" : "responder",
+	    " cap=", Hex(cap, Hex::PREFIX, Hex::PAD),
+	    " gran=", gran,
+	    " ctrl=", Hex(ctrl, Hex::PREFIX, Hex::PAD),
+	    req.write ? " -> write " : " -> would write ",
+	    Hex(v, Hex::PREFIX, Hex::PAD));
+
+	if (!req.write)
+		return;
+
+	cfg.ptm_cap->write<Ptm::Control>(v);
+	self.ptm_enabled = true;
+
+	log("ptm ", bdf, " readback ctrl=",
+	    Hex(cfg.ptm_cap->read<Ptm::Control>(), Hex::PREFIX, Hex::PAD));
+}
+
+
+void Main::handle_ptm_device(Bdf const &bdf, Config &cfg)
+{
+	if (!cfg.ptm_cap.constructed())
+		return;
+
+	using Ptm = Config::Ptm_capability;
+
+	auto const cap  = cfg.ptm_cap->read<Ptm::Capability>();
+	auto const ctrl = cfg.ptm_cap->read<Ptm::Control>();
+
+	bool    const requester = Ptm::Capability::Requester::get(cap);
+	uint8_t const gran      = (uint8_t)Ptm::Capability::Granularity::get(cap);
+
+	Ptm_request const req = ptm_request_for_device(bdf);
+	if (!req.requested)
+		return;
+
+	if (!requester) {
+		warning("ptm ", bdf, ": requested but not requester-capable");
+		return;
+	}
+
+	bool    upstream_enabled = false;
+	uint8_t upstream_gran    = 0;
+	for_bridge(bdf.bus, [&] (Bridge &b) {
+		upstream_enabled = b.ptm_enabled;
+		upstream_gran    = b.ptm_granularity;
+	});
+
+	Ptm::Control::access_t v = 0;
+	Ptm::Control::Enable::set(v, 1);
+	Ptm::Control::Granularity::set(v, ptm_path_granularity(upstream_gran,
+	                                                       gran));
+
+	log("ptm ", bdf, " requester",
+	    " cap=", Hex(cap, Hex::PREFIX, Hex::PAD),
+	    " gran=", gran, " upstream_gran=", upstream_gran,
+	    " ctrl=", Hex(ctrl, Hex::PREFIX, Hex::PAD),
+	    (req.write && upstream_enabled) ? " -> write " : " -> would write ",
+	    Hex(v, Hex::PREFIX, Hex::PAD));
+
+	if (!upstream_enabled) {
+		log("ptm ", bdf, ": upstream responder is not enabled, so this "
+		    "requester is left alone");
+		return;
+	}
+
+	if (!req.write)
+		return;
+
+	cfg.ptm_cap->write<Ptm::Control>(v);
+
+	log("ptm ", bdf, " readback ctrl=",
+	    Hex(cfg.ptm_cap->read<Ptm::Control>(), Hex::PREFIX, Hex::PAD));
+}
+
+
+void Main::report_ptm(Config &cfg, Generator &g)
+{
+	if (!cfg.ptm_cap.constructed())
+		return;
+
+	using Ptm = Config::Ptm_capability;
+
+	auto const cap  = cfg.ptm_cap->read<Ptm::Capability>();
+	auto const ctrl = cfg.ptm_cap->read<Ptm::Control>();
+
+	g.node("ptm", [&] {
+		if (Ptm::Capability::Requester::get(cap)) g.attribute("requester", true);
+		if (Ptm::Capability::Responder::get(cap)) g.attribute("responder", true);
+		if (Ptm::Capability::Root::get(cap))      g.attribute("root",      true);
+
+		g.attribute("granularity",
+		            (unsigned)Ptm::Capability::Granularity::get(cap));
+
+		if (Ptm::Control::Enable::get(ctrl))      g.attribute("enabled", true);
+		if (Ptm::Control::Root_select::get(ctrl)) g.attribute("root_selected", true);
+
+		g.attribute("effective_granularity",
+		            (unsigned)Ptm::Control::Granularity::get(ctrl));
+	});
+}
+
+
 bus_t Main::parse_pci_function(Bdf        bdf,
                                Config    &cfg,
                                addr_t     cfg_phys_base,
@@ -196,11 +463,13 @@ bus_t Main::parse_pci_function(Bdf        bdf,
 	if (cfg.read<Config::Header_type::Type>()) {
 		for_bridge(bdf.bus, [&] (Bridge &parent) {
 			Config_type1 bcfg(cfg.range());
-			new (heap) Bridge(parent.sub_bridges, bdf,
-			                  bcfg.secondary_bus_number(),
-			                  bcfg.subordinate_bus_number());
+			Bridge &self = *new (heap) Bridge(parent.sub_bridges, bdf,
+			                                  bcfg.secondary_bus_number(),
+			                                  bcfg.subordinate_bus_number());
 
 			subordinate_bus = bcfg.subordinate_bus_number();
+
+			handle_ptm_bridge(bdf, cfg, parent, self);
 
 			/* enable I/O spaces and DMA in bridges if not done already */
 			using Command = Pci::Config::Command;
@@ -215,6 +484,10 @@ bus_t Main::parse_pci_function(Bdf        bdf,
 			}
 		});
 	}
+
+	/* a requester is an endpoint; a responder was handled in the branch above */
+	if (!cfg.read<Config::Header_type::Type>())
+		handle_ptm_device(bdf, cfg);
 
 	bool      msi     = msi_capable && cfg.msi_cap.constructed();
 	bool      msi_x   = msi_capable && cfg.msi_x_cap.constructed();
@@ -304,6 +577,8 @@ bus_t Main::parse_pci_function(Bdf        bdf,
 				            string(cfg0.read<C0::Subsystem_device>()));
 			}
 		});
+
+		report_ptm(cfg, g);
 
 		cfg.for_each_bar([&] (uint64_t addr, uint64_t size,
 		                      unsigned bar, bool pf)
