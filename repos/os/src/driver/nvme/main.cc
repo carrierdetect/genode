@@ -1431,11 +1431,28 @@ class Nvme::Controller : Platform::Device,
 					return;
 				}
 
+				/*
+				 * NCQA is the UPPER half of Dw0, and the shift has to be
+				 * parenthesised: >> binds tighter than &, so
+				 * `dw0 & 0xffff0000u >> 16` is `dw0 & 0xffffu` -- the
+				 * SUBMISSION count, printed twice under two labels. The
+				 * numbers happen to agree on every controller seen here,
+				 * which is exactly why it went unnoticed.
+				 *
+				 * The cast is needed and is part of the story: with the
+				 * parentheses right, -Wconversion rejects the expression,
+				 * because the compiler can no longer prove the result fits
+				 * a uint16_t. Written the wrong way round it narrows
+				 * provably and builds clean.
+				 *
+				 * Both fields are 0's based, hence the 1u +.
+				 */
 				uint32_t const dw0  = e.read<Cqe::Dw0>();
 				uint16_t const nsqa = 1u + (dw0 & 0xffffu);
-				uint16_t const ncqa = 1u + (dw0 & 0xffff0000u >> 16);
+				uint16_t const ncqa = (uint16_t)(1u + ((dw0 >> 16) & 0xffffu));
 				log("Allocated number of submission: ",
-				     nsqa, " and completion: ", ncqa, " queues");
+				     nsqa, " and completion: ", ncqa, " queues "
+				     "(requested ", num_queues, ")");
 				Cqe::dump(e);
 			},
 			[&] () { /* already false */ }
