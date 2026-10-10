@@ -60,6 +60,45 @@ ret_type name args \
 }
 
 
+/*
+ * 'sched_yield' warns ONCE, not once per call
+ *
+ * It behaves exactly as the DUMMY it replaces -- ENOSYS and -1, so no caller
+ * sees a different answer -- but it says so a single time.
+ *
+ * The reason is console volume. Hercules calls this from tight retry loops:
+ * io.c's TIO path calls it whenever a test-I/O returns busy, "to prevent a
+ * TIO Busy Loop", and console.c calls it after ten failed DEVBLK scan
+ * retries. One partition of one Genode/Hercules boot produced 14,542 of
+ * these in the nine seconds between the IPL command and MVS's first console
+ * prompt -- about a megabyte of log, which on a machine whose only console
+ * is AMT serial-over-LAN at 115200 baud is some seventy seconds of pure
+ * transmission, and which buries every other line in the capture. The
+ * warning was carrying no information after the first one.
+ *
+ * It is deliberately still a warning rather than silence: that a yield was
+ * asked for and refused is worth knowing once, and it points a reader of a
+ * capture at this file. DUMMY_SILENT above would have been one word and
+ * would have thrown the fact away.
+ *
+ * Implementing it for real is a separate question. NOVA has EC_YIELD, and
+ * base-nova's own spin lock reaches the kernel through EC_RESCHEDULE, but
+ * this file is kernel-agnostic so a real implementation needs a base-level
+ * primitive that does not exist yet.
+ */
+extern "C" __attribute__((weak)) int sched_yield(void)
+{
+	static bool warned = false;
+	if (!warned) {
+		warned = true;
+		Genode::warning("sched_yield not implemented "
+		                "(warning issued once per component)");
+	}
+	errno = ENOSYS;
+	return -1;
+}
+
+
 #define __SYS_DUMMY(ret_type, ret_val, name, args)\
 	extern "C" __attribute__((weak)) \
 	ret_type __sys_##name args \
@@ -133,7 +172,6 @@ DUMMY(int   , -1, rmdir, (const char *))
 DUMMY(void *,  0, sbrk, (intptr_t))
 DUMMY(int   , -1, sched_setparam, (pid_t, const sched_param *))
 DUMMY(int   , -1, sched_setscheduler, (pid_t, int, const sched_param *))
-DUMMY(int   , -1, sched_yield, (void))
 DUMMY(int   , -1, __semctl, (void))
 DUMMY(int   , -1, setegid, (uid_t))
 DUMMY(int   , -1, seteuid, (uid_t))

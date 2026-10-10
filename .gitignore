@@ -14,3 +14,8 @@
 /repos/world
 /repos/zynq
 
+
+# This lab reaches its own scenarios and components through repos/local,
+# which belongs to the genode-hercules repository and must never be committed
+# here. Untracked was not enough: one "git add -A" staged all of it.
+/repos/local/
