@@ -387,6 +387,30 @@ void Main::handle_ptm_bridge(Bdf const &bdf, Config &cfg,
 	                            : ptm_path_granularity(parent.ptm_granularity,
 	                                                   gran);
 
+	/*
+	 * Record whether the responder is ENABLED from the CONTROL REGISTER, not
+	 * from whether this component was the one that enabled it. Two reasons,
+	 * and the first was found the hard way.
+	 *
+	 * A dry run exists to say what a write run would do. Setting this flag
+	 * only on the write path made a dry run report "upstream responder is not
+	 * enabled, so this requester is left alone" on the very line after
+	 * printing that root port's ctrl=0x3, in which Enable is set -- a
+	 * prediction that was both self-contradictory and the opposite of what
+	 * the write run then did.
+	 *
+	 * And the firmware on this hardware enables PTM during POST, so a path
+	 * can already be good before pci_decode touches anything. A scenario that
+	 * names only the endpoint must not be told the path is dead.
+	 *
+	 * A root needs Root Select as well as Enable, because a root with Enable
+	 * alone does not source the dialogue. A responder needs its parent, since
+	 * its own Enable bit says nothing about the hop above it.
+	 */
+	self.ptm_enabled = Ptm::Control::Enable::get(ctrl)
+	                && (root ? Ptm::Control::Root_select::get(ctrl)
+	                         : (responder && parent.ptm_enabled));
+
 	if (!req.requested)
 		return;
 
