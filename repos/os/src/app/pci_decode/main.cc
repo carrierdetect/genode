@@ -66,7 +66,21 @@ struct Main
 	{
 		bool requested { false };
 		bool write     { false };
+		bool verify    { false };
 	};
+
+	/*
+	 * Prove the write reaches the device before trusting a readback.
+	 *
+	 * On the machine this was developed against, firmware enables PTM during
+	 * POST, so the control register ALREADY holds the value we would write.
+	 * Writing it and reading it back therefore demonstrates nothing: a write
+	 * that never left the component would produce an identical log. So with
+	 * verify="yes" the register is first cleared and read back, which fails
+	 * visibly if the write is not reaching hardware, and only then is the
+	 * intended value written.
+	 */
+	bool ptm_write_reaches_device(Pci::Bdf const &, Config &);
 
 	Ptm_request ptm_request_for_device(Pci::Bdf const &) const;
 	Ptm_request ptm_request_behind(Pci::bus_t from, Pci::bus_t to) const;
@@ -258,6 +272,8 @@ Main::Ptm_request Main::ptm_request_for_device(Bdf const &bdf) const
 		result.requested = true;
 		if (node.attribute_value("write", false))
 			result.write = true;
+		if (node.attribute_value("verify", false))
+			result.verify = true;
 	});
 
 	return result;
@@ -280,6 +296,8 @@ Main::Ptm_request Main::ptm_request_behind(bus_t from, bus_t to) const
 		result.requested = true;
 		if (node.attribute_value("write", false))
 			result.write = true;
+		if (node.attribute_value("verify", false))
+			result.verify = true;
 	});
 
 	return result;
@@ -298,6 +316,31 @@ static Genode::uint8_t ptm_path_granularity(Genode::uint8_t upstream,
 		return 0;
 
 	return upstream > local ? upstream : local;
+}
+
+
+bool Main::ptm_write_reaches_device(Bdf const &bdf, Config &cfg)
+{
+	using Ptm = Config::Ptm_capability;
+
+	auto const before = cfg.ptm_cap->read<Ptm::Control>();
+
+	cfg.ptm_cap->write<Ptm::Control>(0);
+	auto const cleared = cfg.ptm_cap->read<Ptm::Control>();
+
+	bool const reaches = (cleared == 0);
+
+	if (reaches)
+		log("ptm ", bdf, " verify: cleared ",
+		    Hex(before, Hex::PREFIX, Hex::PAD), " and read back 0x0, so the "
+		    "write reaches the device");
+	else
+		error("ptm ", bdf, " verify: wrote 0x0 but read back ",
+		      Hex(cleared, Hex::PREFIX, Hex::PAD),
+		      " -- the write is NOT reaching the device, so any readback "
+		      "below proves nothing");
+
+	return reaches;
 }
 
 
@@ -358,6 +401,9 @@ void Main::handle_ptm_bridge(Bdf const &bdf, Config &cfg,
 	if (!req.write)
 		return;
 
+	if (req.verify)
+		ptm_write_reaches_device(bdf, cfg);
+
 	cfg.ptm_cap->write<Ptm::Control>(v);
 	self.ptm_enabled = true;
 
@@ -415,6 +461,9 @@ void Main::handle_ptm_device(Bdf const &bdf, Config &cfg)
 
 	if (!req.write)
 		return;
+
+	if (req.verify)
+		ptm_write_reaches_device(bdf, cfg);
 
 	cfg.ptm_cap->write<Ptm::Control>(v);
 
