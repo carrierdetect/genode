@@ -20,24 +20,58 @@ diff -u -r a/src/drivers/net/intel.c b/src/drivers/net/intel.c
  	/* Always reset MAC.  Required to reset the TX and RX rings. */
  	writel ( ( ctrl | INTEL_CTRL_RST ), intel->regs + INTEL_CTRL );
  	mdelay ( INTEL_RESET_DELAY_MS );
-@@ -1137,6 +1149,16 @@
+@@ -1048,6 +1060,7 @@
+ 	PCI_ROM ( 0x8086, 0x0d4f, "i219v-10", "I219-V (10)", INTEL_I219 ),
+ 	PCI_ROM ( 0x8086, 0x0d53, "i219lm-12", "I219-LM (12)", INTEL_I219 ),
+ 	PCI_ROM ( 0x8086, 0x0d55, "i219v-12", "I219-V (12)", INTEL_I219 ),
++	PCI_ROM ( 0x8086, 0x0d9f, "i225it", "I225-IT", INTEL_PBSIZE_RST ),
+ 	PCI_ROM ( 0x8086, 0x1000, "82542-f", "82542 (Fiber)", 0 ),
+ 	PCI_ROM ( 0x8086, 0x1001, "82543gc-f", "82543GC (Fiber)", 0 ),
+ 	PCI_ROM ( 0x8086, 0x1004, "82543gc", "82543GC (Copper)", 0 ),
+@@ -1137,6 +1150,42 @@
  	PCI_ROM ( 0x8086, 0x10f0, "82578dc", "82578DC", 0 ),
  	PCI_ROM ( 0x8086, 0x10f5, "82567lm", "82567LM", 0 ),
  	PCI_ROM ( 0x8086, 0x10f6, "82574l", "82574L", 0 ),
-+	/* Only the "V" variants of I225/I226 are listed here, and the
-+	 * omission is deliberate. The "LM" variants are the vPro parts,
-+	 * and on this port's second target the LM port carries Intel AMT,
-+	 * which is that machine's ONLY console -- it has no serial
-+	 * connector and its firmware has no KVM. Binding that port would
-+	 * cost remote recovery entirely. The platform policy naming one
-+	 * PCI address is the first guard; leaving the id out of this
-+	 * table is the second.
++	/* The I225/I226 family, backported verbatim from upstream iPXE.
++	 *
++	 * The "LM" variants are listed, and they were deliberately left out
++	 * when this patch was first written. The requirement behind that was
++	 * real -- on this port's second target the LM port carries Intel AMT,
++	 * which is that machine's only console -- but the mechanism was wrong
++	 * in both directions. It made the driver useless on a host whose only
++	 * NICs are LM parts, and it never protected AMT in the first place.
++	 *
++	 * Which port a scenario drives is decided by the platform driver's
++	 * policy, not by this table. dde_ipxe is handed exactly ONE device by
++	 * its Platform session -- nic.c's scan_pci() calls dde_pci_device(),
++	 * singular, and never scans a bus -- and a device no policy grants is
++	 * never ACQUIRED: pci_enable() has exactly one caller,
++	 * Session_component::enable_device(), so such a device is never
++	 * powered on, bus-mastered or IRQ-enabled, and no client maps it.
++	 *
++	 * Not "never touched", though, and the difference is worth stating.
++	 * Device_model::finalize_devices_preparation() walks EVERY device in
++	 * the model and calls apply_quirks(), which sets memory/IO space
++	 * enable per declared BAR, runs the UHCI/EHCI/HD-audio quirks -- none
++	 * of which match an Ethernet function -- and then writes the original
++	 * COMMAND value back. So an ungranted device's config space is written
++	 * and restored. Observed consequence on the machine this matters for:
++	 * none. A full Genode boot with the LM in the model and only the V
++	 * port granted carried AMT Serial-over-LAN throughout, that console
++	 * being how the boot was captured in the first place.
++	 *
++	 * The id check is in any case too late to protect anything: the
++	 * Pci_driver constructor opens the device session and maps the BARs
++	 * before nic.c compares ids, so an unlisted id yields "no driver
++	 * found" AFTER the risky step, not instead of it.
 +	 */
++	PCI_ROM ( 0x8086, 0x125b, "i226lm", "I226-LM", INTEL_PBSIZE_RST ),
 +	PCI_ROM ( 0x8086, 0x125c, "i226v", "I226-V", INTEL_PBSIZE_RST ),
++	PCI_ROM ( 0x8086, 0x125d, "i226it", "I226-IT", INTEL_PBSIZE_RST ),
  	PCI_ROM ( 0x8086, 0x1501, "82567v-3", "82567V-3", INTEL_PBS_ERRATA ),
  	PCI_ROM ( 0x8086, 0x1502, "82579lm", "82579LM", INTEL_NO_PHY_RST ),
  	PCI_ROM ( 0x8086, 0x1503, "82579v", "82579V", 0 ),
-@@ -1156,7 +1178,7 @@
+@@ -1156,7 +1205,7 @@
  	PCI_ROM ( 0x8086, 0x1525, "82567v-4", "82567V-4", 0 ),
  	PCI_ROM ( 0x8086, 0x1526, "82576-5", "82576", 0 ),
  	PCI_ROM ( 0x8086, 0x1527, "82580-f2", "82580 Fiber", 0 ),
@@ -46,7 +80,7 @@ diff -u -r a/src/drivers/net/intel.c b/src/drivers/net/intel.c
  	PCI_ROM ( 0x8086, 0x1539, "i211", "I211", 0 ),
  	PCI_ROM ( 0x8086, 0x153a, "i217lm", "I217-LM", INTEL_NO_PHY_RST ),
  	PCI_ROM ( 0x8086, 0x153b, "i217v", "I217-V", 0 ),
-@@ -1164,7 +1186,7 @@
+@@ -1164,7 +1213,7 @@
  	PCI_ROM ( 0x8086, 0x155a, "i218lm", "I218-LM", INTEL_NO_PHY_RST ),
  	PCI_ROM ( 0x8086, 0x156f, "i219lm", "I219-LM", INTEL_I219 ),
  	PCI_ROM ( 0x8086, 0x1570, "i219v", "I219-V", INTEL_I219 ),
@@ -55,14 +89,23 @@ diff -u -r a/src/drivers/net/intel.c b/src/drivers/net/intel.c
  	PCI_ROM ( 0x8086, 0x15a0, "i218lm-2", "I218-LM", INTEL_NO_PHY_RST ),
  	PCI_ROM ( 0x8086, 0x15a1, "i218v-2", "I218-V", 0 ),
  	PCI_ROM ( 0x8086, 0x15a2, "i218lm-3", "I218-LM", INTEL_NO_PHY_RST ),
-@@ -1184,6 +1206,7 @@
+@@ -1184,6 +1233,8 @@
  	PCI_ROM ( 0x8086, 0x15e1, "i219lm-9", "I219-LM (9)", INTEL_I219 ),
  	PCI_ROM ( 0x8086, 0x15e2, "i219v-9", "I219-V (9)", INTEL_I219 ),
  	PCI_ROM ( 0x8086, 0x15e3, "i219lm-5", "I219-LM (5)", INTEL_I219 ),
++	PCI_ROM ( 0x8086, 0x15f2, "i225lm", "I225-LM", INTEL_PBSIZE_RST ),
 +	PCI_ROM ( 0x8086, 0x15f3, "i225v", "I225-V", INTEL_PBSIZE_RST ),
  	PCI_ROM ( 0x8086, 0x15f4, "i219lm-15", "I219-LM (15)", INTEL_I219 ),
  	PCI_ROM ( 0x8086, 0x15f5, "i219v-15", "I219-V (15)", INTEL_I219 ),
  	PCI_ROM ( 0x8086, 0x15f9, "i219lm-14", "I219-LM (14)", INTEL_I219 ),
+@@ -1193,6 +1244,7 @@
+ 	PCI_ROM ( 0x8086, 0x1f41, "i354", "I354", INTEL_NO_ASDE ),
+ 	PCI_ROM ( 0x8086, 0x294c, "82566dc-2", "82566DC-2", 0 ),
+ 	PCI_ROM ( 0x8086, 0x2e6e, "cemedia", "CE Media Processor", 0 ),
++	PCI_ROM ( 0x8086, 0x5502, "i225lmvp", "I225-LMvP", INTEL_PBSIZE_RST ),
+ };
+ 
+ /** Intel PCI driver */
 diff -u -r a/src/drivers/net/intel.h b/src/drivers/net/intel.h
 --- a/src/drivers/net/intel.h
 +++ b/src/drivers/net/intel.h
