@@ -34,7 +34,19 @@ struct Main
 	Env                   &env;
 	Heap                   heap            { env.ram(), env.rm()       };
 	Attached_rom_dataspace platform_info   { env, "platform_info"      };
-	Attached_rom_dataspace config         { env, "config"             };
+
+	/*
+	 * OPTIONAL, and it has to be. This component historically took no
+	 * configuration, so the scenarios that start it do not give it an inline
+	 * <config> -- and init does not invent one: with no <config> node it
+	 * applies ordinary session routing to the "config" ROM request, which
+	 * reaches the parent, finds nothing, and the component dies at
+	 * construction. Requiring a config here broke twenty of this project's
+	 * twenty-one scenarios, none of which want PTM.
+	 *
+	 * Absent config means no PTM request, which is the correct default.
+	 */
+	Constructible<Attached_rom_dataspace> config { };
 	Expanding_reporter     pci_reporter    { env, "devices", "devices", { 32*1024 } };
 	Registry<Bridge>       bridge_registry {}; /* contains host bridges */
 
@@ -265,7 +277,10 @@ Main::Ptm_request Main::ptm_request_for_device(Bdf const &bdf) const
 	Ptm_request result { };
 	String<16> const want = Bdf::string(bdf);
 
-	config.node().for_each_sub_node("ptm", [&] (Node const &node) {
+	if (!config.constructed())
+		return result;
+
+	config->node().for_each_sub_node("ptm", [&] (Node const &node) {
 		String<16> const got = node.attribute_value("device", String<16>());
 		if (strcmp(got.string(), want.string()))
 			return;
@@ -284,7 +299,10 @@ Main::Ptm_request Main::ptm_request_behind(bus_t from, bus_t to) const
 {
 	Ptm_request result { };
 
-	config.node().for_each_sub_node("ptm", [&] (Node const &node) {
+	if (!config.constructed())
+		return result;
+
+	config->node().for_each_sub_node("ptm", [&] (Node const &node) {
 		String<16> const got = node.attribute_value("device", String<16>());
 		bus_t bus = 0;
 		if (!parse_bdf_bus(got, bus)) {
@@ -1218,6 +1236,38 @@ void Main::parse_pci_config_spaces(Node const &node, Generator &g)
 
 Main::Main(Env &env) : env(env)
 {
+	/* see the declaration: a scenario need not provide one */
+	/*
+	 * This component took no configuration until PTM was added, so the
+	 * scenarios that start it have no inline <config>. Two things follow,
+	 * both measured on hardware rather than assumed.
+	 *
+	 * The request does NOT fail. With no inline <config>, init applies
+	 * ordinary session routing to the "config" ROM request, which under the
+	 * usual any-service/parent route reaches core and is answered with the
+	 * boot module called "config" -- that is, INIT'S OWN CONFIG. Verified:
+	 * the root node came back as <config> in a scenario that provides none.
+	 * So nothing breaks, but the document is not ours.
+	 *
+	 * It works only because init's config has no top-level <ptm> node, which
+	 * is luck rather than design. So a config carrying <start> nodes is
+	 * recognised as init's and ignored, which turns a silent misread into a
+	 * visible warning. And the ROM is optional anyway, for a scenario whose
+	 * routing is strict enough to refuse it.
+	 */
+	try {
+		config.construct(env, "config");
+
+		if (config->node().has_sub_node("start")) {
+			warning("the \"config\" ROM has <start> nodes, so it is init's own "
+			        "config rather than one for this component -- ignoring it. "
+			        "Give pci_decode an inline <config> to request PTM.");
+			config.destruct();
+		}
+	} catch (Service_denied) {
+		log("no \"config\" ROM, so no PTM is requested; reporting only");
+	}
+
 	platform_info.node().with_optional_sub_node("kernel", [&] (Node const &node)
 	{
 		apic_capable = node.attribute_value("acpi", false);
