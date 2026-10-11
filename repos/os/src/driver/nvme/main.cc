@@ -918,6 +918,20 @@ class Nvme::Controller : Platform::Device,
 
 		uint32_t hmpre { };
 		uint32_t hmmin { };
+
+		/*
+		 * What SET FEATURES / NUMBER OF QUEUES asked for, and what the
+		 * controller granted. The granted figure is a hard ceiling on this
+		 * driver's clients, because one I/O queue is created per Block
+		 * session, and it was previously available only as a log line -- a
+		 * client that has to size a layout against it cannot read a log.
+		 * The requested figure sits beside it because the two being equal
+		 * means the answer is a FLOOR rather than the controller's maximum:
+		 * it was never asked for more.
+		 */
+		uint16_t numq_requested { };
+		uint16_t nsqa { };
+		uint16_t ncqa { };
 	};
 
 	struct Nsinfo
@@ -1453,6 +1467,10 @@ class Nvme::Controller : Platform::Device,
 				log("Allocated number of submission: ",
 				     nsqa, " and completion: ", ncqa, " queues "
 				     "(requested ", num_queues, ")");
+
+				_info.numq_requested = num_queues;
+				_info.nsqa           = nsqa;
+				_info.ncqa           = ncqa;
 				Cqe::dump(e);
 			},
 			[&] () { /* already false */ }
@@ -1921,6 +1939,7 @@ class Nvme::Driver : Genode::Noncopyable
 		bool _verbose_regs     { false };
 
 		size_t _hmb_size { 0 };
+		unsigned _numq { 64 };   /* I/O queues to request; see max_io_queues */
 
 		struct Io_error           : Genode::Exception { };
 		struct Request_congestion : Genode::Exception { };
@@ -1957,6 +1976,23 @@ class Nvme::Driver : Genode::Noncopyable
 
 			_hmb_size = config.attribute_value("max_hmb_size", Genode::Number_of_bytes(0));
 
+			/*
+			 * How many I/O queues to ask the controller for. 64 is what this
+			 * driver has always asked for and stays the default, so every
+			 * existing configuration behaves exactly as it did. It is settable
+			 * because a controller that grants everything it was asked for has
+			 * not told you its maximum, and a hardware probe wants the maximum.
+			 * MAX_IO_QUEUES is 128 and the queue arrays are already sized for
+			 * it; a queue is constructed when a session uses it, so asking for
+			 * more costs nothing until more are opened.
+			 */
+			_numq = config.attribute_value("max_io_queues", _numq);
+			if (_numq < 1 || _numq > Nvme::MAX_IO_QUEUES) {
+				Genode::warning("max_io_queues=", _numq, " is outside 1..",
+				                (unsigned)Nvme::MAX_IO_QUEUES, ", using 64");
+				_numq = 64;
+			}
+
 			if (config.attribute_value("system", false)) {
 				_system_rom.construct(_env, "system");
 				_system_rom->sigh(_system_rom_sigh);
@@ -1981,6 +2017,18 @@ class Nvme::Driver : Genode::Noncopyable
 
 					g.attribute("serial", info.sn);
 					g.attribute("model",  info.mn);
+
+					/*
+					 * One I/O queue per Block session, so "granted" is how many
+					 * sessions this controller can carry. If it equals "requested"
+					 * the controller was never asked for more and the figure is a
+					 * floor, which a reader has to be able to tell.
+					 */
+					g.node("io_queues", [&] () {
+						g.attribute("granted",    info.nsqa);
+						g.attribute("completion", info.ncqa);
+						g.attribute("requested",  info.numq_requested);
+					});
 
 					Nvme::Controller::Nsinfo ns = ctrlr.nsinfo(Nvme::IO_NSID);
 
@@ -2074,7 +2122,7 @@ class Nvme::Driver : Genode::Noncopyable
 			/*
 			 * Setup maximal number of SQ/CQ
 			 */
-			ctrlr.setup_numq(64);
+			ctrlr.setup_numq((Genode::uint16_t)_numq);
 
 			/*
 			 * Setup I/O
