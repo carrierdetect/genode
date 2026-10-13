@@ -33,7 +33,7 @@ They come from porting the [Hercules](https://github.com/SDL-Hercules-390/hyperi
 IBM mainframe emulator to Genode, where each emulated machine is a separate
 component.
 
-### `acc2e4cfe3` — nvme: size the I/O queue allocator to the arrays it indexes
+### `1ac58a22f4` — nvme: size the I/O queue allocator to the arrays it indexes
 
 A framework defect, and the one most likely to matter to someone else. The NVMe
 driver's I/O queue id allocator was a `Bit_allocator<MAX_IO_ENTRIES>` — 512 bits
@@ -45,7 +45,7 @@ bitten. Also stops a rejected submit counting as in flight, and makes the
 unreachable arm of the acceptance switch return `REJECTED` rather than falling
 through while reporting `ACCEPTED`.
 
-### `7275bf42c4` — vfs/terminal: `read_ready()` must ask the terminal
+### `69fc227759` — vfs/terminal: `read_ready()` must ask the terminal
 
 A framework defect affecting any user of the VFS terminal plugin that moves more
 than 4000 bytes in one go. Data reaches the plugin's staging buffer either in
@@ -59,7 +59,7 @@ for a reply never does. A lost wakeup that presents as a dead link.
 Found with 7754 bytes against the 4000-byte buffer; every smaller message had
 gone through.
 
-### `7b53634017` — lwip: narrow the ephemeral TCP port range
+### `44250b4d63` — lwip: narrow the ephemeral TCP port range
 
 Not a defect — a deployment choice, and arguably the wrong thing for anyone
 else to copy blindly. lwIP's default ephemeral range is IANA's whole dynamic
