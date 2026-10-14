@@ -30,6 +30,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <errno.h>
 #include <sys/select.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -67,6 +68,10 @@ class Terminal::Open_socket : public List<Open_socket>::Element
 		 * answered. See port/OPEN-ITEMS.md item 18 in the genode-hercules
 		 * lab repository -- closing '_sd' here cost one experiment's reply
 		 * and looked like a libc plugin fault on the write path.
+		 *
+		 * The flag therefore has two readers: the 'select' set, which stops
+		 * watching this socket for reading, and the listen socket, which is
+		 * watched again so that the next client can displace this one.
 		 */
 		bool _read_eof = false;
 
@@ -229,12 +234,32 @@ class Terminal::Open_socket : public List<Open_socket>::Element
 		 */
 		void accept_remote_connection()
 		{
+			/*
+			 * A predecessor yields the session to the newcomer. If it was
+			 * still waiting for a reply it loses it, which is acceptable
+			 * for a sequential operator interface and far better than a
+			 * session that answers one client and then goes deaf for the
+			 * rest of its life -- a stale connection cannot lock the port.
+			 *
+			 * This is a behaviour change against mainline, which left a
+			 * second client waiting in the backlog until the first closed.
+			 * It is deliberate: see the select loop for why the first
+			 * closing is not something this server can detect.
+			 */
+			if (connection_established()) {
+				close(_sd);
+				_sd = -1;
+			}
+			_read_eof = false;
+
 			struct sockaddr addr;
 			socklen_t len = sizeof(addr);
 			_sd = accept(_listen_sd, &addr, &len);
 
 			if (connection_established())
 				log("connection established");
+			else
+				error("accept failed: ", (int)errno);
 
 			/*
 			 * Inform client about the finished initialization of the terminal
@@ -267,6 +292,9 @@ class Terminal::Open_socket : public List<Open_socket>::Element
 			 */
 			if (num_bytes <= 0) {
 				_read_eof = true;
+				log("peer stopped sending (read ", (int)num_bytes,
+				    "); the read side is done, the session can still "
+				    "answer");
 				return;
 			}
 
@@ -405,14 +433,33 @@ class Terminal::Open_socket_pool
 						continue;
 
 					/*
-					 * If the connection is not already established, tell
-					 * 'select' to notify us about a new connection.
+					 * ALWAYS watch the listen socket, whether or not a
+					 * connection is established, so that a new connection
+					 * displaces whatever is there.
+					 *
+					 * It used to be watched only while no connection
+					 * existed, and 'read()' returning zero -- which closed
+					 * '_sd' -- was what returned the session to listening.
+					 * Once a zero read stops being a close (see
+					 * '_read_eof'), something else has to, and it cannot be
+					 * the departure of the peer: ON THIS STACK THAT CANNOT
+					 * BE RELIED UPON TO BE NOTICED. A FIN that arrives
+					 * while the read buffer is occupied is never reported
+					 * by a later 'select()' -- measured under qemu, where a
+					 * client that half-closes while its command is still in
+					 * the buffer leaves a socket that reads neither data
+					 * nor EOF, for ever. The same stack is why nothing here
+					 * may treat a zero read as a close in the first place.
+					 *
+					 * So liveness is not inferred at all: the arrival of a
+					 * new connection is the event, and it is always watched
+					 * for.
 					 */
-					if (!s->connection_established()) {
-						nfds = max(nfds, s->listen_sd());
-						FD_SET(s->listen_sd(), &rfds);
+					nfds = max(nfds, s->listen_sd());
+					FD_SET(s->listen_sd(), &rfds);
+
+					if (!s->connection_established())
 						continue;
-					}
 
 					/*
 					 * The connection is established. We watch the connection's
@@ -446,12 +493,15 @@ class Terminal::Open_socket_pool
 
 				for (Open_socket *s = _list.first(); s; s = s->next()) {
 
-					/* look for new connection */
-					if (!s->connection_established()) {
-						if (FD_ISSET(s->listen_sd(), &rfds))
-							s->accept_remote_connection();
+					/* a new connection displaces the one in place */
+					if (s->listen_sd_valid()
+					 && FD_ISSET(s->listen_sd(), &rfds)) {
+						s->accept_remote_connection();
 						continue;
 					}
+
+					if (!s->connection_established())
+						continue;
 
 					/* connection is established, look for incoming data */
 					if (FD_ISSET(s->sd(), &rfds))
