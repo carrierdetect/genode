@@ -236,10 +236,16 @@ class Terminal::Open_socket : public List<Open_socket>::Element
 		{
 			/*
 			 * A predecessor yields the session to the newcomer. If it was
-			 * still waiting for a reply it loses it, which is acceptable
-			 * for a sequential operator interface and far better than a
-			 * session that answers one client and then goes deaf for the
-			 * rest of its life -- a stale connection cannot lock the port.
+			 * still waiting for a reply, that reply is lost -- or WORSE,
+			 * delivered to the newcomer: a write already on its way from
+			 * the entrypoint thread goes to whatever '_sd' then holds, and
+			 * 'accept()' is quite likely to hand back the descriptor
+			 * number just closed. That is acceptable for a sequential
+			 * operator interface, where the second connection is the same
+			 * person reconnecting, and far better than a session that
+			 * answers one client and then goes deaf for the rest of its
+			 * life -- a stale connection cannot lock the port. It would
+			 * not be acceptable where two clients may overlap.
 			 *
 			 * This is a behaviour change against mainline, which left a
 			 * second client waiting in the backlog until the first closed.
