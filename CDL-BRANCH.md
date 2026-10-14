@@ -5,7 +5,7 @@ binary was built from.**
 
 This is a mirror of [Genode](https://genode.org) — the upstream is
 [codeberg.org/genodelabs/genode](https://codeberg.org/genodelabs/genode) —
-with **fifteen changes** by **Carrier Detect Labs** on `cdl/main`, plus the
+with **thirteen changes** by **Carrier Detect Labs** on `cdl/main`, plus the
 commits that maintain this file and change no code.
 
 `main` and `staging` are upstream, untouched. The base of this branch is
@@ -52,8 +52,14 @@ and this list is checked against it, not against memory.
 | 11 | `6e3724030a` | nvme: the completion-queue count was the submission count printed twice |
 | 12 | `51485c9ffd` | libc: warn once that `sched_yield` is unimplemented, not once per call |
 | 13 | `51ac225906` | nvme: report the granted I/O queue count, and make the request configurable |
-| 14 | `5c57cbded2` | tcp_terminal: a half-close from the client is not a close |
-| 15 | `e56f190be8` | tcp_terminal: a new connection displaces the old one |
+| — | `5c57cbded2` | tcp_terminal: a half-close from the client is not a close — **reverted** |
+| — | `e56f190be8` | tcp_terminal: a new connection displaces the old one — **reverted** |
+| — | `25140aad41` | tcp_terminal: a comment correction to the above — **reverted** |
+| — | `22ad290705` | the revert of all three; `tcp_terminal` is 26.05's, byte for byte |
+
+The four `tcp_terminal` rows carry no number because they cancel out: the
+file they touch is the release's, unchanged. They are listed because a reader
+of the log will see them, and the last one's message is the account of why.
 
 Three of them have the long write-ups they were given when this file only
 described three commits; the rest are summarised below. **Every commit message
@@ -189,7 +195,7 @@ the operating system's first console prompt — about a megabyte of log, which
 buries every other line in a capture, and worse on a machine whose only
 console is a serial-over-LAN session.
 
-### `5c57cbded2`, `e56f190be8` — tcp_terminal: a half-close is not a close
+### `5c57cbded2`, `e56f190be8`, reverted by `22ad290705` — tcp_terminal
 
 A defect in common code, affecting any client of this server that is fed from
 a pipe. On a zero-length read the server closed the socket, and a zero-length
@@ -202,9 +208,9 @@ lines: `read()`'s `ssize_t` result was assigned to a `size_t`, and only `== 0`
 was handled, so any error on an open socket became `SIZE_MAX` and the client
 read stale buffer for ever.
 
-The fix keeps the descriptor open for writing, ends only the read side, and
-omits an EOF socket from the `select()` read set so the entrypoint does not
-spin on a descriptor that is readable for ever.
+**ALL OF THIS IS REVERTED, and the reason is the useful part.** The fix kept
+the descriptor open for writing, ended only the read side, and omitted an EOF
+socket from the `select()` read set.
 
 **The second commit was required by the first, and the obvious form of it
 was wrong.**
@@ -215,9 +221,23 @@ listen socket when the peer stops sending looks like the repair and fails,
 because **this stack cannot be relied upon to notice the peer leaving**: a FIN
 arriving while the read buffer is still occupied — exactly what a half-closing
 client produces — is never reported by a later `select()`. The session now
-watches the listen socket unconditionally and a **new connection displaces the
-one in place**. That is a deliberate behaviour change against upstream, where a
-second client waits in the backlog until the first closes, and it is the half
-of this change most worth disagreeing with: it suits an operator interface,
-where a stale connection must not be able to lock the port, and it would not
-suit a server that expects to arbitrate between concurrent clients.
+watched the listen socket unconditionally so that a **new connection displaced
+the one in place** -- a deliberate behaviour change against upstream, where a
+second client waits in the backlog until the first closes.
+
+**That is what broke it.** A connection queued while the server was absent is
+accepted later and takes the port from a live client, and the server's next
+reply goes to the hijacker. Measured against a management-plane gate that
+destroys and recreates its server mid-run: the gate failed three times with
+these commits and passes with the release's file. Upstream's rule -- accept
+only while the descriptor is -1 -- makes a late arrival wait harmlessly in the
+backlog, and there is no way to tell that stale connection from a real one,
+because the thing to tell apart is exactly whether a peer that has stopped
+talking is still there.
+
+So the fix belongs in the client, which must not half-close while it is still
+waiting to be answered, and that is where it now lives. One narrow server-side
+defect in the same lines remains worth reporting upstream on its own: `read()`'s
+`ssize_t` result is assigned to a `size_t` and only `== 0` is handled, so an
+error on an open socket becomes `SIZE_MAX` and the client reads stale buffer
+for ever.
