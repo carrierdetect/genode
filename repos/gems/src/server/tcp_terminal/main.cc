@@ -60,6 +60,16 @@ class Terminal::Open_socket : public List<Open_socket>::Element
 		 */
 		int _sd;
 
+		/*
+		 * The peer has stopped sending, which is NOT the same as the peer
+		 * having gone away: a request/response client fed from a pipe
+		 * half-closes as soon as its input ends and then waits to be
+		 * answered. See port/OPEN-ITEMS.md item 18 in the genode-hercules
+		 * lab repository -- closing '_sd' here cost one experiment's reply
+		 * and looked like a libc plugin fault on the write path.
+		 */
+		bool _read_eof = false;
+
 		/**
 		 * Signal handler to be informed about the established connection
 		 */
@@ -176,6 +186,13 @@ class Terminal::Open_socket : public List<Open_socket>::Element
 		bool connection_established() const { return _sd != -1; }
 
 		/**
+		 * Return true if the peer has stopped sending
+		 *
+		 * The session stays usable for writing.
+		 */
+		bool read_eof() const { return _read_eof; }
+
+		/**
 		 * Register signal handler to be notified once we accepted the TCP
 		 * connection
 		 */
@@ -238,13 +255,22 @@ class Terminal::Open_socket : public List<Open_socket>::Element
 			}
 
 			/* read from socket */
-			_read_buf_bytes_used = ::read(_sd, _read_buf, sizeof(_read_buf));
+			ssize_t const num_bytes = ::read(_sd, _read_buf,
+			                                 sizeof(_read_buf));
 
-			if (_read_buf_bytes_used == 0) {
-				close(_sd);
-				_sd = -1;
+			/*
+			 * Stop watching the socket for reading, but keep it open so that
+			 * the session can still answer. '_read_buf_bytes_used' is a
+			 * 'size_t', so a negative result must never be assigned to it:
+			 * -1 would become SIZE_MAX and 'read_buffer' would hand the
+			 * client that many bytes of stale buffer, for ever.
+			 */
+			if (num_bytes <= 0) {
+				_read_eof = true;
 				return;
 			}
+
+			_read_buf_bytes_used = (size_t)num_bytes;
 
 			/* notify client about bytes available for reading */
 			if (_read_avail_sigh.valid())
@@ -395,7 +421,7 @@ class Terminal::Open_socket_pool
 					 * up in the TCP/IP stack.
 					 */
 					nfds = max(nfds, s->sd());
-					if (s->read_buffer_empty())
+					if (s->read_buffer_empty() && !s->read_eof())
 						FD_SET(s->sd(), &rfds);
 				}
 
