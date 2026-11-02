@@ -5,7 +5,7 @@ binary was built from.**
 
 This is a mirror of [Genode](https://genode.org) — the upstream is
 [codeberg.org/genodelabs/genode](https://codeberg.org/genodelabs/genode) —
-with **thirteen changes** by **Carrier Detect Labs** on `cdl/main`, plus the
+with **fourteen changes** by **Carrier Detect Labs** on `cdl/main`, plus the
 commits that maintain this file and change no code.
 
 `main` and `staging` are upstream, untouched. The base of this branch is
@@ -52,6 +52,7 @@ and this list is checked against it, not against memory.
 | 11 | `6e3724030a` | nvme: the completion-queue count was the submission count printed twice |
 | 12 | `51485c9ffd` | libc: warn once that `sched_yield` is unimplemented, not once per call |
 | 13 | `51ac225906` | nvme: report the granted I/O queue count, and make the request configurable |
+| 14 | `5def3bbdca` | libc: count what the monitor queue was doing when a job was executed |
 | — | `5c57cbded2` | tcp_terminal: a half-close from the client is not a close — **reverted** |
 | — | `e56f190be8` | tcp_terminal: a new connection displaces the old one — **reverted** |
 | — | `25140aad41` | tcp_terminal: a comment correction to the above — **reverted** |
