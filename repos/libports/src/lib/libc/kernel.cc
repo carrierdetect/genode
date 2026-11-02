@@ -577,11 +577,18 @@ unsigned long long Libc::monitor_bin_ahead[Libc::MONITOR_BINS] { };
  * stack. Each array is indexed by the number of examination passes the job
  * waited: 0, 1, 2, 3, 4-7, 8 or more.
  *
- * Reading resets, so two readers would each see part of the traffic. One
- * reader is the intended arrangement, as for any of this component's other
- * read-and-reset instruments. The reset races with the entrypoint's own
- * increments and may lose a sample at the boundary; it cannot do worse,
- * because every counter is a plain word and nothing here owns memory.
+ * 'passes' is CUMULATIVE and is the one counter not reset, because it is the
+ * clock each in-flight job's enqueue stamp is measured against: zeroing it
+ * would make every job already queued look as though it had waited no passes
+ * at all, which is precisely the bin the measurement turns on. Difference it
+ * across two reads to get a window's worth. Everything else is read and
+ * reset.
+ *
+ * One reader is the intended arrangement, as for any of this component's other
+ * read-and-reset instruments; two would each see part of the traffic. The
+ * reset races with the entrypoint's own increments and may lose a sample at
+ * the boundary; it cannot do worse, because every counter is a plain word and
+ * nothing here owns memory.
  */
 extern "C" unsigned libc_monitor_stats(unsigned long long *passes,
                                        unsigned long long *examined,
