@@ -548,3 +548,66 @@ Libc::Kernel::Kernel(Genode::Env &env, Genode::Allocator &heap)
 	if (_config.cloned)
 		_clone_connection.destruct();
 }
+
+
+/*
+ * The monitor-queue instrument's state, and the one call that reads it.
+ *
+ * internal/monitor.h explains what is counted and why. The definitions live
+ * here because that header is included by nine translation units and file-
+ * scope state in it would be nine separate copies.
+ */
+
+unsigned long long Libc::monitor_passes       { 0 };
+unsigned long long Libc::monitor_examined     { 0 };
+unsigned long long Libc::monitor_completed    { 0 };
+unsigned long long Libc::monitor_examined_max { 0 };
+unsigned long long Libc::monitor_bin_count[Libc::MONITOR_BINS] { };
+unsigned long long Libc::monitor_bin_tsc  [Libc::MONITOR_BINS] { };
+unsigned long long Libc::monitor_bin_max  [Libc::MONITOR_BINS] { };
+unsigned long long Libc::monitor_bin_ahead[Libc::MONITOR_BINS] { };
+
+
+/**
+ * Read and reset the monitor-queue counters
+ *
+ * 'bins' is the number of entries the caller has room for in each of the four
+ * arrays; the return value is the number actually written, so a caller built
+ * against a different bin count gets a short answer rather than a corrupted
+ * stack. Each array is indexed by the number of examination passes the job
+ * waited: 0, 1, 2, 3, 4-7, 8 or more.
+ *
+ * Reading resets, so two readers would each see part of the traffic. One
+ * reader is the intended arrangement, as for any of this component's other
+ * read-and-reset instruments. The reset races with the entrypoint's own
+ * increments and may lose a sample at the boundary; it cannot do worse,
+ * because every counter is a plain word and nothing here owns memory.
+ */
+extern "C" unsigned libc_monitor_stats(unsigned long long *passes,
+                                       unsigned long long *examined,
+                                       unsigned long long *completed,
+                                       unsigned long long *examined_max,
+                                       unsigned long long *bin_count,
+                                       unsigned long long *bin_tsc,
+                                       unsigned long long *bin_max,
+                                       unsigned long long *bin_ahead,
+                                       unsigned            bins)
+{
+	using namespace Libc;
+
+	if (passes)       { *passes       = monitor_passes; }
+	if (examined)     { *examined     = monitor_examined;     monitor_examined     = 0; }
+	if (completed)    { *completed    = monitor_completed;    monitor_completed    = 0; }
+	if (examined_max) { *examined_max = monitor_examined_max; monitor_examined_max = 0; }
+
+	unsigned const n = (bins < MONITOR_BINS) ? bins : MONITOR_BINS;
+
+	for (unsigned i = 0; i < n; i++) {
+		if (bin_count) { bin_count[i] = monitor_bin_count[i]; monitor_bin_count[i] = 0; }
+		if (bin_tsc)   { bin_tsc  [i] = monitor_bin_tsc  [i]; monitor_bin_tsc  [i] = 0; }
+		if (bin_max)   { bin_max  [i] = monitor_bin_max  [i]; monitor_bin_max  [i] = 0; }
+		if (bin_ahead) { bin_ahead[i] = monitor_bin_ahead[i]; monitor_bin_ahead[i] = 0; }
+	}
+
+	return n;
+}

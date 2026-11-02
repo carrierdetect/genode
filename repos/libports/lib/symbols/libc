@@ -1005,6 +1005,7 @@ _ZN4Libc7suspendERNS_15Suspend_functorEm T
 _ZN4Libc14pthread_createEPP7pthreadPKP12pthread_attrPFPvS7_ES7_PKc T
 _ZN4Libc26pthread_create_from_threadEPP7pthreadRN6Genode6ThreadEPv T
 _ZN4Libc27pthread_create_from_sessionEPP7pthreadPFPvS3_ES3_mPKcPN6Genode11Cpu_sessionENS8_8Affinity8LocationE T
+libc_monitor_stats T
 
 #
 # C++ runtime (implemented in ld.lib.so which is not linked directly to libc components)
