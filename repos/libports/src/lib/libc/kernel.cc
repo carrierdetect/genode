@@ -486,6 +486,13 @@ Libc::Kernel::Kernel(Genode::Env &env, Genode::Allocator &heap)
 {
 	libc_resolv_path = _config.nameserver.string();
 
+	/*
+	 * The monitor-queue instrument's gate, set before anything can enqueue a
+	 * job: this runs during 'Kernel' construction and the only thread in
+	 * existence is this one. See internal/monitor.h.
+	 */
+	monitor_stats_on = _config.monitor_stats;
+
 	init_atexit(_atexit);
 
 	_atexit_fd_alloc_ptr = &_fd_alloc;
@@ -558,6 +565,7 @@ Libc::Kernel::Kernel(Genode::Env &env, Genode::Allocator &heap)
  * scope state in it would be nine separate copies.
  */
 
+bool               Libc::monitor_stats_on    { false };
 unsigned long long Libc::monitor_passes       { 0 };
 unsigned long long Libc::monitor_examined     { 0 };
 unsigned long long Libc::monitor_completed    { 0 };
@@ -617,4 +625,17 @@ extern "C" unsigned libc_monitor_stats(unsigned long long *passes,
 	}
 
 	return n;
+}
+
+
+/**
+ * Whether the per-job timing bins are being filled
+ *
+ * A caller needs this to tell an instrument that is OFF from one that is on
+ * and saw no traffic: both return zeroed bins. The counters the flag does not
+ * gate -- 'passes', 'examined', 'completed' -- are valid either way.
+ */
+extern "C" int libc_monitor_stats_enabled(void)
+{
+	return Libc::monitor_stats_on ? 1 : 0;
 }

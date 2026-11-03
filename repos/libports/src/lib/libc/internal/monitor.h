@@ -61,16 +61,38 @@ namespace Libc { class Blockade; };
  * bins from whichever thread asks. Both races are benign for an instrument and
  * neither can corrupt a pointer; a torn read costs one sample.
  *
- * COST. Two 'Trace::timestamp()' reads per job. That primitive serialises with
- * 'cpuid' and costs about 163 cycles on the hardware this was written for --
- * four times a bare 'rdtscp' -- which at the few thousand jobs a second a busy
- * component runs is under a millisecond of CPU per second of wall clock. The
- * framework's own abstraction is used rather than a hand-rolled 'rdtscp'
- * because this file is built for every architecture and that one is not.
+ * COST, AND WHY IT IS OFF BY DEFAULT. Two 'Trace::timestamp()' reads per job.
+ * That primitive serialises with 'cpuid' and costs about 163 cycles on the
+ * hardware this was written for -- four times a bare 'rdtscp' -- which at the
+ * few thousand jobs a second a busy component runs is under a millisecond of
+ * CPU per second of wall clock. The framework's own abstraction is used rather
+ * than a hand-rolled 'rdtscp' because this file is built for every
+ * architecture and that one is not.
+ *
+ * Under a millisecond is not nothing when the library in question is linked by
+ * every libc component on the system, including those of whoever else builds
+ * this branch. So 'monitor_stats_on' gates it, from the 'monitor_stats'
+ * attribute of a component's own '<libc>' config node, default FALSE. It is
+ * read once during 'Kernel' construction -- before any pthread exists to
+ * enqueue a job, so no job is ever stamped under one setting and accounted
+ * under the other -- and never written again.
+ *
+ * WHAT THE FLAG DOES *NOT* GATE, deliberately: 'monitor_passes',
+ * 'monitor_examined' and 'monitor_completed'. Those are plain increments with
+ * no timestamp behind them, and the pass RATE is the figure that identified
+ * the starvation this instrument was built to find -- 4,029 passes a second
+ * idle against 223 behind a non-yielding neighbour. Leaving them unconditional
+ * means a component that has not asked for the instrument still answers the
+ * question "is the entrypoint running", for about one increment per pass. Only
+ * the per-job timing bins need the flag, and when it is off they are empty --
+ * so a reader must consult 'libc_monitor_stats_enabled' rather than read an
+ * empty bin table as a quiet queue.
  */
 namespace Libc {
 
 	enum { MONITOR_BINS = 6 };   /* passes waited: 0, 1, 2, 3, 4-7, 8+ */
+
+	extern bool monitor_stats_on;   /* '<libc monitor_stats="yes"/>'; see above */
 
 	extern unsigned long long monitor_passes;      /* examination passes */
 	extern unsigned long long monitor_examined;    /* jobs looked at, all passes */
@@ -231,8 +253,10 @@ struct Libc::Monitor::Pool
 			 * it is what makes the job reachable by the entrypoint -- stamping
 			 * afterwards would race with a pass that has already executed it.
 			 */
-			job._enq_pass = monitor_passes;
-			job._enq_tsc  = Genode::Trace::timestamp();
+			if (monitor_stats_on) {
+				job._enq_pass = monitor_passes;
+				job._enq_tsc  = Genode::Trace::timestamp();
+			}
 
 			Registry<Job>::Element element { _jobs, job };
 
@@ -279,6 +303,11 @@ struct Libc::Monitor::Pool
 						 * object is that caller's stack local -- reading it
 						 * afterwards is a use-after-free that would usually
 						 * get away with it.
+						 *
+						 * '~0ULL' is also where a job lands when
+						 * 'monitor_stats_on' is false: it was never stamped,
+						 * so this block -- and its 'Trace::timestamp()' --
+						 * is skipped without a second test for the flag.
 						 */
 						if (job._enq_pass != ~0ULL) {
 

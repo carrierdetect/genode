@@ -29,7 +29,7 @@ struct Libc::Config
 {
 	using Path = String<Vfs::MAX_PATH_LEN>;
 
-	bool   update_mtime, cloned;
+	bool   update_mtime, cloned, monitor_stats;
 	pid_t  pid;
 	Path   rtc, rng, pipe, socket, nameserver;
 	size_t stack_size;
@@ -48,6 +48,13 @@ struct Libc::Config
 		return {
 			.update_mtime = libc.attribute_value("update_mtime", true),
 			.cloned       = libc.attribute_value("cloned", false),
+			/*
+			 * CDL: the monitor-queue instrument, off unless a scenario asks
+			 * for it. See internal/monitor.h -- what it costs when ON is two
+			 * serialising timestamp reads per job, which is not something to
+			 * impose on every component that links this library.
+			 */
+			.monitor_stats = libc.attribute_value("monitor_stats", false),
 			.pid          = libc.attribute_value("pid",    pid_t(0)),
 			.rtc          = libc.attribute_value("rtc",    Path()),
 			.rng          = libc.attribute_value("rng",    Path()),
