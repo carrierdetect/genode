@@ -5,7 +5,7 @@ binary was built from.**
 
 This is a mirror of [Genode](https://genode.org) — the upstream is
 [codeberg.org/genodelabs/genode](https://codeberg.org/genodelabs/genode) —
-with **fifteen changes** by **Carrier Detect Labs** on `cdl/main`, plus the
+with **sixteen changes** by **Carrier Detect Labs** on `cdl/main`, plus the
 commits that maintain this file and change no code.
 
 `main` and `staging` are upstream, untouched. The base of this branch is
@@ -54,6 +54,7 @@ and this list is checked against it, not against memory.
 | 13 | `51ac225906` | nvme: report the granted I/O queue count, and make the request configurable |
 | 14 | `5def3bbdca` | libc: count what the monitor queue was doing when a job was executed |
 | 15 | `06c7b04674` | libc: say that the monitor-queue pass count is the one counter not reset |
+| 16 | `e58e23782f` | libc: gate the monitor-queue timing bins on a config attribute, default off |
 | — | `5c57cbded2` | tcp_terminal: a half-close from the client is not a close — **reverted** |
 | — | `e56f190be8` | tcp_terminal: a new connection displaces the old one — **reverted** |
 | — | `25140aad41` | tcp_terminal: a comment correction to the above — **reverted** |
@@ -196,6 +197,48 @@ boot produced 14,542 warnings in the nine seconds between the load command and
 the operating system's first console prompt — about a megabyte of log, which
 buries every other line in a capture, and worse on a machine whose only
 console is a serial-over-LAN session.
+
+### `5def3bbdca`, `06c7b04674`, `e58e23782f` — libc: the monitor queue's instrument, and its gate
+
+**This is the one change on the branch that is an instrument rather than a fix,
+and the only one whose cost you could notice.** It exists because of a
+measurement that nothing in a caller could make.
+
+Genode's libc answers `poll()` by enqueueing a job for the component's
+entrypoint and waiting — before it consults the timeout, so even a zero-timeout
+`poll()` is an entrypoint round trip. In the system this branch was made for,
+one such call read 40 microseconds from one thread and 9,010 from another, in
+the same component and the same second. Every explanation available from a
+caller had been excluded, so `Libc::Monitor::Pool` was made to count, per
+completed synchronous job, how many examination PASSES elapsed between its
+enqueue and its execution and how many other jobs the entrypoint got through in
+that pass first. The answer was that **nothing queues** — not one job in a
+92-second window waited a second pass — and that the entrypoint's pass rate had
+fallen from 4,029 a second to 223, because a thread that never yields was
+holding its core at equal priority. The instrument is what distinguished "the
+round trip is expensive" from "the round trip is behind other work", and the
+second reading was the one this project had wrongly carried for days.
+
+**Why it is off by default, as of `e58e23782f`.** Filling the per-job timing
+bins costs two `Genode::Trace::timestamp()` reads per job, and that primitive
+serialises with `cpuid`. In a library every libc component links, that is a
+cost imposed on code that never asked for it, so it now needs the
+`monitor_stats` attribute on a component's own `<libc>` config node and is
+FALSE without it. The flag is read once during `Kernel` construction, before
+any pthread exists to enqueue a job.
+
+**What still counts when it is off**, deliberately: `monitor_passes`,
+`monitor_examined` and `monitor_completed`. Those are plain increments, and the
+pass rate alone answers "is the entrypoint running" — which was the whole
+finding. `libc_monitor_stats_enabled` says which state a reader is looking at,
+because an instrument that is off and a queue with no traffic return identical
+empty bins.
+
+**If you are reading this branch to decide whether to carry the change:** the
+two counting commits are additive and the third makes them inert unless asked
+for, so taking all three costs a configuration attribute you never set. Taking
+none of them costs nothing either — no other change on this branch depends on
+them.
 
 ### `5c57cbded2`, `e56f190be8`, reverted by `22ad290705` — tcp_terminal
 
