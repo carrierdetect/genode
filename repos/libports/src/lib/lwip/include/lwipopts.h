@@ -81,8 +81,29 @@ extern "C" {
  * leaves the other two undefined. The default TCP_ENSURE_LOCAL_PORT_RANGE is
  * a mask-and-add that assumes the range runs to 0xffff, and with a short
  * range it can seed tcp_port past the end -- where tcp_new_port's "== END"
- * wrap test never fires and the stack walks out of the range entirely. The
- * modulo below cannot do that.
+ * wrap test never fires and the stack walks out of the range entirely.
+ *
+ * THE MODULO MUST THEREFORE EXCLUDE END, AND AT FIRST IT DID NOT. This
+ * comment used to say "the modulo below cannot do that", which was a claim
+ * and was wrong. Read tcp_new_port (tcp.c): it does "tcp_port++; if
+ * (tcp_port == END) tcp_port = START", so the only value from which the wrap
+ * test cannot fire is END itself -- END+1 is not END, and from there the
+ * counter climbs away and never comes back. A modulo over (END - START + 1)
+ * seeds tcp_init's tcp_port anywhere in [START, END] INCLUSIVE, so one seed
+ * in sixteen left the stack allocating 11616, 11617, ... none of them
+ * forwarded. Silent, one-sided, and about 6% of boots: LWIP_RAND here is
+ * genode_rand(), a PCG32 seeded from Trace::timestamp(), so it is a fresh
+ * draw every boot rather than a fixed one.
+ *
+ * The modulo is over (END - START), which seeds into [START, END-1]. That is
+ * exactly the set tcp_new_port can hand out, because it increments BEFORE it
+ * compares: END is forwarded but never allocated, so a band of sixteen ports
+ * has fifteen usable ones. Leaving the sixteenth forward in place is
+ * deliberate -- it costs one rule and keeps the band a round number in the
+ * documents.
+ *
+ * (And the span must be at least two. A one-port band makes this a modulo by
+ * zero and has no allocatable port at all; the consumer's build refuses it.)
  *
  * THE TRAILING DECIMAL COMMENT ON EACH #define IS CHECKED, not decoration.
  * These two macros are the only place the band is written down: a consumer
@@ -97,7 +118,7 @@ extern "C" {
 #define TCP_ENSURE_LOCAL_PORT_RANGE(port) \
     ((u16_t)(TCP_LOCAL_PORT_RANGE_START + \
              ((port) % (u16_t)(TCP_LOCAL_PORT_RANGE_END - \
-                               TCP_LOCAL_PORT_RANGE_START + 1))))
+                               TCP_LOCAL_PORT_RANGE_START))))
 
 #define LWIP_NETIF_STATUS_CALLBACK  1  /* callback function used for interface changes */
 #define LWIP_NETIF_LINK_CALLBACK    1  /* callback function used for link-state changes */
