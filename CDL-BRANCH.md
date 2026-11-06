@@ -5,7 +5,7 @@ binary was built from.**
 
 This is a mirror of [Genode](https://genode.org) — the upstream is
 [codeberg.org/genodelabs/genode](https://codeberg.org/genodelabs/genode) —
-with **sixteen changes** by **Carrier Detect Labs** on `cdl/main`, plus the
+with **seventeen changes** by **Carrier Detect Labs** on `cdl/main`, plus the
 commits that maintain this file and change no code.
 
 `main` and `staging` are upstream, untouched. The base of this branch is
@@ -55,6 +55,7 @@ and this list is checked against it, not against memory.
 | 14 | `5def3bbdca` | libc: count what the monitor queue was doing when a job was executed |
 | 15 | `06c7b04674` | libc: say that the monitor-queue pass count is the one counter not reset |
 | 16 | `e58e23782f` | libc: gate the monitor-queue timing bins on a config attribute, default off |
+| 17 | `ea40fd42b5` | lwip: make the narrowed port range the only copy of the band |
 | — | `5c57cbded2` | tcp_terminal: a half-close from the client is not a close — **reverted** |
 | — | `e56f190be8` | tcp_terminal: a new connection displaces the old one — **reverted** |
 | — | `25140aad41` | tcp_terminal: a comment correction to the above — **reverted** |
@@ -129,6 +130,21 @@ of this header at build time and refuse to build if they cannot, so the two
 `#define` lines are now load-bearing for a consumer outside this tree. The
 trailing decimal comment on each is checked against the macro value, since the
 comment is what the consuming prose quotes.
+
+### `ea40fd42b5` — lwip: make the narrowed port range the only copy of the band
+
+**Comment and documentation only; the macros and the band are unchanged, and
+nothing compiles differently.** It is numbered as a change rather than as a
+file-maintenance commit because it edits a source file, and it edits this file
+in the same commit because the invariant is one sentence in both places.
+
+What it records is that the two `#define`s above are now load-bearing outside
+this tree: the consuming project's two run scripts read them at build time to
+generate one `nic_router` `tcp-forward` rule per port in the band, instead of
+repeating the numbers. Their build also checks each macro's trailing decimal
+comment against the macro value, which is why that comment is not decoration
+— it is what the consuming prose quotes, so a value changed without its
+comment refuses that build rather than half-landing.
 
 ### `3afb045344`, `745123905c` — dde_ipxe: the Intel I225/I226 family
 
