@@ -118,10 +118,17 @@ upstream's attention, since the way it fails gives no clue.
 A follow-up to the commit above and the same kind of change: a deployment
 choice, not a defect. The band first chosen, 20480–20495, sits in the middle
 of the range this deployment reserves for an emulated communications
-controller, so it moves to 11600–11615. The two numbers live in three places
-— here and as literals in two run scripts that are not derived from this file
-— and a disagreement fails silently and one-sidedly: lwIP picks a
-passive-mode data port the router does not forward.
+controller, so it moves to 11600–11615.
+
+The two numbers used to live in three places — here and as literals in two of
+the consuming project's run scripts, which were not derived from this file —
+and a disagreement fails silently and one-sidedly: lwIP picks a passive-mode
+data port the router does not forward. **Since 2026-11-06 the macros below are
+the only copy**: those run scripts read `TCP_LOCAL_PORT_RANGE_START`/`_END` out
+of this header at build time and refuse to build if they cannot, so the two
+`#define` lines are now load-bearing for a consumer outside this tree. The
+trailing decimal comment on each is checked against the macro value, since the
+comment is what the consuming prose quotes.
 
 ### `3afb045344`, `745123905c` — dde_ipxe: the Intel I225/I226 family
 

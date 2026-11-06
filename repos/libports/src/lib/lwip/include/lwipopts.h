@@ -83,6 +83,14 @@ extern "C" {
  * range it can seed tcp_port past the end -- where tcp_new_port's "== END"
  * wrap test never fires and the stack walks out of the range entirely. The
  * modulo below cannot do that.
+ *
+ * THE TRAILING DECIMAL COMMENT ON EACH #define IS CHECKED, not decoration.
+ * These two macros are the only place the band is written down: a consumer
+ * outside this tree reads them at build time to generate one nic_router
+ * tcp-forward rule per port in the band, and compares each comment against
+ * its macro value. Change the value and the comment together, or that build
+ * refuses -- which is the point, because the alternative is lwIP picking a
+ * passive-mode port the router was not told to forward, in silence.
  */
 #define TCP_LOCAL_PORT_RANGE_START  0x2D50                 /* 11600 */
 #define TCP_LOCAL_PORT_RANGE_END    0x2D5F                 /* 11615 */
