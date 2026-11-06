@@ -5,7 +5,7 @@ binary was built from.**
 
 This is a mirror of [Genode](https://genode.org) — the upstream is
 [codeberg.org/genodelabs/genode](https://codeberg.org/genodelabs/genode) —
-with **seventeen changes** by **Carrier Detect Labs** on `cdl/main`, plus the
+with **eighteen changes** by **Carrier Detect Labs** on `cdl/main`, plus the
 commits that maintain this file and change no code.
 
 `main` and `staging` are upstream, untouched. The base of this branch is
@@ -56,6 +56,7 @@ and this list is checked against it, not against memory.
 | 15 | `06c7b04674` | libc: say that the monitor-queue pass count is the one counter not reset |
 | 16 | `e58e23782f` | libc: gate the monitor-queue timing bins on a config attribute, default off |
 | 17 | `ea40fd42b5` | lwip: make the narrowed port range the only copy of the band |
+| 18 | `fd974d6775` | lwip: the narrowed range's seed could start one past its end |
 | — | `5c57cbded2` | tcp_terminal: a half-close from the client is not a close — **reverted** |
 | — | `e56f190be8` | tcp_terminal: a new connection displaces the old one — **reverted** |
 | — | `25140aad41` | tcp_terminal: a comment correction to the above — **reverted** |
@@ -145,6 +146,32 @@ repeating the numbers. Their build also checks each macro's trailing decimal
 comment against the macro value, which is why that comment is not decoration
 — it is what the consuming prose quotes, so a value changed without its
 comment refuses that build rather than half-landing.
+
+### `fd974d6775` — lwip: the narrowed range's seed could start one past its end
+
+**The first real defect in this group**, as opposed to a deployment choice,
+and it was in the fix for the deployment choice.
+
+`TCP_ENSURE_LOCAL_PORT_RANGE` is overridden here because upstream's default is
+a mask-and-add that assumes the range runs to `0xffff`. The replacement was a
+modulo over `(END - START + 1)`, which seeds `tcp_init`'s `tcp_port` anywhere
+in `[START, END]` **inclusive** — and `tcp_new_port` increments before it
+compares, so `END` is the one value from which its `== END` wrap test cannot
+fire. From there the counter walks past the band and never returns. With the
+range at 11600–11615 that is one seed in sixteen, and `LWIP_RAND` here is
+`genode_rand()`, PCG32 seeded from `Trace::timestamp()`, so it is a fresh draw
+every boot rather than a fixed outcome: roughly 6% of boots allocated ports
+nobody had forwarded, and a port outside the band fails silently — an FTP
+control connection that works and a data connection that hangs.
+
+The modulo is now over `(END - START)`, seeding into `[START, END-1]`, which
+is exactly the set `tcp_new_port` can return. So `END` is forwarded and never
+allocated and a sixteen-port band has fifteen usable ports; that is documented
+rather than fixed, because the spare rule costs nothing.
+
+**The comment in that file had ruled this out** — "the modulo below cannot do
+that" — and ruling out a failure mode in a comment is a claim, not a fact.
+It is replaced with what `tcp_new_port` does.
 
 ### `3afb045344`, `745123905c` — dde_ipxe: the Intel I225/I226 family
 
