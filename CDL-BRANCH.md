@@ -5,7 +5,7 @@ binary was built from.**
 
 This is a mirror of [Genode](https://genode.org) — the upstream is
 [codeberg.org/genodelabs/genode](https://codeberg.org/genodelabs/genode) —
-with **eighteen changes** by **Carrier Detect Labs** on `cdl/main`, plus the
+with **nineteen changes** by **Carrier Detect Labs** on `cdl/main`, plus the
 commits that maintain this file and change no code.
 
 `main` and `staging` are upstream, untouched. The base of this branch is
@@ -37,6 +37,17 @@ component. Oldest first, as `git log --reverse 492a510242..cdl/main` lists
 them. **The count has been wrong here before**; that command is the authority
 and this list is checked against it, not against memory.
 
+**FOUR CODE COMMITS ARE DELIBERATELY ABSENT FROM THE TABLE**, which is why
+that command reports twenty-three and the table has nineteen rows. They are
+`5c57cbded2`, `e56f190be8` and `25140aad41`, three changes to `tcp_terminal`
+about a client's half-close displacing or misdelivering a connection, and
+`22ad290705`, which REVERTS all three because they broke the test they were
+meant to serve. Their net effect on the tree is nothing, so they are not
+changes this branch carries -- but they are in the history, a reader counting
+commits will find them, and a list that silently omitted four would be the
+kind of discrepancy the sentence above exists to prevent. The defect they
+addressed was fixed in the client instead.
+
 | | commit | what it is |
 |---|---|---|
 | 1 | `44250b4d63` | lwip: narrow the ephemeral TCP port range, clear of `nic_router`'s NAT pool |
@@ -57,6 +68,7 @@ and this list is checked against it, not against memory.
 | 16 | `e58e23782f` | libc: gate the monitor-queue timing bins on a config attribute, default off |
 | 17 | `ea40fd42b5` | lwip: make the narrowed port range the only copy of the band |
 | 18 | `fd974d6775` | lwip: the narrowed range's seed could start one past its end |
+| 19 | `6b9d2eafea` | trace_subject_reporter: report when the subject list did not fit, and make the buffer configurable |
 | — | `5c57cbded2` | tcp_terminal: a half-close from the client is not a close — **reverted** |
 | — | `e56f190be8` | tcp_terminal: a new connection displaces the old one — **reverted** |
 | — | `25140aad41` | tcp_terminal: a comment correction to the above — **reverted** |
