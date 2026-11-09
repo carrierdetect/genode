@@ -20,6 +20,8 @@
 #include <base/heap.h>
 #include <os/reporter.h>
 #include <util/retry.h>
+#include <base/log.h>
+#include <util/reconstructible.h>
 
 
 struct Trace_subject_registry
@@ -84,9 +86,10 @@ struct Trace_subject_registry
 
 	public:
 
-		void update(Genode::Trace::Connection &trace, Genode::Allocator &alloc)
+		Genode::Trace::Connection::For_each_subject_info_result
+		update(Genode::Trace::Connection &trace, Genode::Allocator &alloc)
 		{
-			trace.for_each_subject_info([&] (Genode::Trace::Subject_id id,
+			return trace.for_each_subject_info([&] (Genode::Trace::Subject_id id,
 			                                 Genode::Trace::Subject_info const &info) {
 
 				Entry *e = _lookup(id);
@@ -149,7 +152,29 @@ struct App::Main
 {
 	Env &_env;
 
-	Trace::Connection _trace { _env, 128*1024, 32*1024 };
+	/*
+	 * THE ARGUMENT BUFFER IS A CEILING ON HOW MANY SUBJECTS CAN BE REPORTED,
+	 * and 32 KiB is about 131 of them -- Carrier Detect Labs, 2026-11-09.
+	 *
+	 * core clamps its reply to what fits (base/src/core/
+	 * trace_session_component.cc:56-62), so on a machine with more threads
+	 * than that the report is SILENTLY TRUNCATED. It cost a measurement: a
+	 * capture of a Hercules partition reported 131 subjects against a highest
+	 * subject id of 187, and the threads it dropped included the emulated
+	 * processor -- the one the measurement was about. 57 of 90 seconds of one
+	 * core's time was attributed to nothing, which was only noticed because
+	 * the consumer summed each core's subjects and found they did not add up
+	 * to the span.
+	 *
+	 * Both sizes are configurable now, with the old values as defaults.
+	 */
+	static size_t _default_ram()        { return 128*1024; }
+	static size_t _default_arg_buffer() { return  32*1024; }
+
+	size_t _ram        = _default_ram();
+	size_t _arg_buffer = _default_arg_buffer();
+
+	Constructible<Trace::Connection> _trace { };
 
 	Expanding_reporter _reporter { _env, "trace_subjects", "trace_subjects",
 	                               Expanding_reporter::Initial_buffer_size { 64*1024 } };
@@ -205,6 +230,30 @@ void App::Main::_handle_config()
 	_report_affinity = _config_report_attribute_enabled("affinity");
 	_report_activity = _config_report_attribute_enabled("activity");
 
+	/*
+	 * THE TRACE SESSION IS OPENED ONCE AND NOT REOPENED ON A CONFIG CHANGE.
+	 * Its buffer sizes are read at the first configuration because a new
+	 * session would renumber every subject and discard every `total`
+	 * accumulated so far, which would silently reset a measurement in
+	 * progress. A change to either size after start-up is therefore reported
+	 * and ignored rather than applied.
+	 */
+	size_t const ram = _config.node().attribute_value("ram", _default_ram());
+	size_t const arg = _config.node().attribute_value("arg_buffer",
+	                                                  _default_arg_buffer());
+	if (!_trace.constructed()) {
+		_ram = ram; _arg_buffer = arg;
+		_trace.construct(_env, _ram, _arg_buffer);
+		log("trace session: ram ", _ram/1024, "K, argument buffer ",
+		    _arg_buffer/1024, "K, which holds about ",
+		    _arg_buffer / (sizeof(Trace::Subject_info) +
+		                   sizeof(Trace::Subject_id)), " subject(s)");
+	} else if (ram != _ram || arg != _arg_buffer) {
+		warning("ram/arg_buffer changed after start-up and are IGNORED: "
+		        "reopening the trace session would renumber every subject "
+		        "and discard every accumulated total");
+	}
+
 	_timer.trigger_periodic(1000*_period_ms);
 }
 
@@ -212,10 +261,32 @@ void App::Main::_handle_config()
 void App::Main::_handle_period()
 {
 	/* update subject information */
-	_trace_subject_registry.update(_trace, _heap);
+	Trace::Connection::For_each_subject_info_result const info =
+		_trace_subject_registry.update(*_trace, _heap);
+
+	/*
+	 * AND SAY SO WHEN THE LIST DID NOT FIT. core returns the number it could
+	 * put in the buffer together with the number the buffer holds, and this
+	 * component used to discard both -- so a truncated report was
+	 * indistinguishable from a complete one. `count == limit` means the reply
+	 * filled the buffer exactly, which is the only evidence available that
+	 * there may be more.
+	 */
+	if (info.count && info.count >= info.limit)
+		warning("trace subject list filled the argument buffer: ",
+		        info.count, " of at most ", info.limit, " subject(s) -- the "
+		        "report is probably TRUNCATED. Raise arg_buffer.");
 
 	/* generate report */
 	_reporter.generate([&] (Generator &g) {
+		/*
+		 * The two numbers go in the DOCUMENT and not only in the log,
+		 * because a consumer that reads the report over a wire has no way to
+		 * see a warning, and a truncated document that cannot say so is the
+		 * failure this change exists to remove.
+		 */
+		g.attribute("subjects", info.count);
+		g.attribute("capacity", info.limit);
 		_trace_subject_registry.report(g, _report_affinity, _report_activity);
 	});
 }
